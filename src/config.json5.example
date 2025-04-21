@@ -1,0 +1,49 @@
+{
+  // Peer WebSocket server settings
+  peer_server: {
+    port: 5874,           // Default peer connection port
+    max_connections: 1000, // Optional: limit for simultaneous peers
+
+    jwt_config: {
+      secret: 'supersecret-peer',      // Secret key used to verify peer JWTs
+      audience: 'pan-peer'             // Expected JWT audience for peers
+    }
+  },
+
+  // Client WebSocket server settings
+  client_server: {
+    port: 5295,               // Default client connection port
+    enable_compression: true, // Enable WebSocket compression
+
+    jwt_config: {
+      secret: 'supersecret-client',   // Secret key used to verify client JWTs
+      audience: 'pan-network'         // Expected JWT audience for clients
+    },
+
+    // Rate limiting (spam) protection
+    spam_protection: {
+      window_seconds: 10,             // Rolling window duration
+      message_limit: 50000,              // Max allowed messages in that window
+      disconnect_threshold: 5,        // Times client can exceed limit before disconnect
+      max_refill_seconds: 10,         // Cap on how fast they can recover burst capacity
+      error_reset_window: 120         // Seconds without a violation to reset the error counter
+    }
+
+  },
+
+  // Group manager config
+  group_manager: {
+    max_groups: 10000
+  },
+
+  // Client registry settings
+  client_registry: {
+    enable_stats: true,
+    cleanup_interval: 300
+  },
+
+  // Logging configuration
+  logging: {
+    log_level: "debug"
+  }
+}

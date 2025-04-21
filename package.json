@@ -1,0 +1,23 @@
+{
+  "name": "pan2",
+  "version": "2.0.0",
+  "description": "PAN p2p websocket network",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "websocket",
+    "peer2peer",
+    "peer",
+    "network"
+  ],
+  "author": "Jay Kuri",
+  "license": "LGPL-2.1",
+  "dependencies": {
+    "jsonwebtoken": "^9.0.2",
+    "uuid": "^11.1.0",
+    "winston": "^3.17.0",
+    "ws": "^8.18.1"
+  }
+}
