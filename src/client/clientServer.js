@@ -13,7 +13,7 @@ const panApp = require('../panApp');
 const DEFAULT_CLIENT_PORT = 5295;
 const MAX_MESSAGE_BYTES = 61440; // 60KB safe limit for JSON messages
 const cleanupTimeouts = new Map();
-const validateClientMessage = require('../utils/validators').validateClientMessage;
+const { validateIncomingClientMessage } = require('../utils/validators');
 const spamProtector = require('../utils/spamProtector');
 
 
@@ -66,8 +66,7 @@ function handleWebSocket(ws, req, config) {
       const msg = JSON.parse(msgBuffer.toString());
       log.verbose('msg: ', msg);
 
-      let errors = validateClientMessage(msg);
-      if (errors !== undefined) {
+      if (!validateIncomingClientMessage(msg)) {
         log.verbose(`Client ${ws.conn_id} sent a bad packet: `, errors);
         ws.msg_errors++;
         ws.lastErrorTimestamp = now;
@@ -151,13 +150,27 @@ function handleWebSocket(ws, req, config) {
       const conn = ws.conn;
 
       if (conn.type === 'client') {
+        let nodeId = panApp.getNodeId();
+
         const clientRouter = panApp.use('clientRouter');
         // force from node id and conn id
+        if (msg.from.conn_id != conn.id) {
+            log.error(`Client ${ws.conn.id} tried to send with a different conn_id, closing connection`);
+            ws.close();
+            return;
+        }
+        if (msg.from.node_id != nodeId) {
+            log.error(`Client ${ws.conn.id} tried to send with a different node_id, closing connection`);
+            ws.close();
+            return;
+        }
+
+        // nail down our from.
         msg.from = {
-            node_id: panApp.getNodeId(),
+            node_id: nodeId,
             conn_id: conn.id
         };
-        log.error(JSON.stringify(msg.from));
+        //log.error(JSON.stringify(msg.from));
         await clientRouter.handleMessage(conn, msg);
       } else if (conn.type === 'node') {
         await handleNodeMessage(conn, msg);
