@@ -16,6 +16,10 @@ class PeerRegistry {
         return this.peers.get(node_id);
     }
 
+    getPeerCount() {
+        return this.peers.size;
+    }
+
     sendToNode(node_id, msg, fromPan) {
         const peer = this.getPeer(node_id);
         if (!peer) {
