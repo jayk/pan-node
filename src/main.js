@@ -14,7 +14,10 @@ const clientServer = require('./client/clientServer');
 const groupManager = require('./client/groupManager');
 const clientRegistry = require('./client/clientRegistry');
 
-function loadConfig() {
+let nodeStarted = false;
+
+// Load config from file if needed
+function loadConfigFromDisk() {
   const configFile = process.env.PAN_CONFIG || 'config.json5';
   const configPath = path.resolve(__dirname, configFile);
 
@@ -29,15 +32,27 @@ function loadConfig() {
   }
 }
 
-async function main() {
+async function startNode(providedConfig = null) {
+  if (nodeStarted) {
+    log.warn('⚠️ PAN Node already started.');
+    return;
+  }
+
+  const config = providedConfig || loadConfigFromDisk();
+
   log.info('🧠 Starting PAN Node...');
 
-  const config = loadConfig();
-
-  log.info('🖹  Initializing Logging...');
   initializeLogger(config.logging);
 
-  // Start peerRouter FIRST — it determines and registers the node ID
+  log.info('🔧 Initializing peer registry...');
+  panApp.setSubsystem('peerRegistry', await require('./peer/peerRegistry').initialize(config.peer_registry || {}));
+
+  log.info('🔧 Initializing agent registry...');
+  panApp.setSubsystem('agentRegistry', await require('./peer/agentRegistry').initialize(config.agent_registry || {}));
+
+  log.info('🔧 Initializing client registry...');
+  panApp.setSubsystem('clientRegistry', await clientRegistry.initialize(config.client_registry));
+
   log.info('⤱  Initializing peer router...');
   panApp.setSubsystem('peerRouter', await peerRouter.initialize(config.peer_router));
 
@@ -45,27 +60,68 @@ async function main() {
   panApp.setSubsystem('peerServer', await peerServer.initialize(config.peer_server));
   log.info('✅ Peer server ready');
 
-
-  log.info('⚙️  Initializing client router...');
+  log.info('⚙  Initializing client router...');
   panApp.setSubsystem('clientRouter', await clientRouter.initialize(config.client_router || {}));
 
   log.info('🔧 Initializing group manager...');
   panApp.setSubsystem('groupManager', await groupManager.initialize(config.group_manager));
 
-  
-  log.info('🔧 Initializing client registry...');
-  panApp.setSubsystem('clientRegistry', await clientRegistry.initialize(config.client_registry));
 
   log.info('🌐 Initializing client server...');
   panApp.setSubsystem('clientServer', await clientServer.initialize(config.client_server));
   log.info('✅ Client server ready');
 
-  log.info('🎉 PAN Node fully online');
+  nodeStarted = true;
 
   global.PAN = panApp;
+
+  log.info('🎉 PAN Node fully online');
 }
 
-main().catch(err => {
-  log.error('❌ PAN Node startup failed:', err);
-  process.exit(1);
-});
+async function stopNode() {
+  if (!nodeStarted) {
+    log.warn('⚠️ PAN Node not running.');
+    return;
+  }
+
+  log.info('🛑 Stopping PAN Node...');
+
+  const shutdowns = [];
+
+  const subsystems = [
+    'peerServer',
+    'clientServer',
+    'peerRouter',
+    'clientRouter',
+    'groupManager',
+    'clientRegistry'
+  ];
+
+  for (const name of subsystems) {
+    const sub = panApp.use(name);
+    if (sub && typeof sub.shutdown === 'function') {
+      shutdowns.push(sub.shutdown().catch((err) => {
+        log.error(`❌ Error shutting down ${name}:`, err);
+      }));
+    }
+  }
+
+  await Promise.all(shutdowns);
+
+  nodeStarted = false;
+  log.info('✅ PAN Node stopped.');
+}
+
+// If this script is being run directly, start the node with config file
+if (require.main === module) {
+  startNode().catch(err => {
+    log.error('❌ PAN Node startup failed:', err);
+    process.exit(1);
+  });
+}
+
+// Expose functions for testing or external control
+module.exports = {
+  startNode,
+  stopNode
+};
