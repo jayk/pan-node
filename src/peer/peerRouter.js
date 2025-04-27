@@ -4,10 +4,11 @@ const { v4: uuidv4, v5: uuidv5, validate: isUuid } = require('uuid');
 const fs = require('fs');
 const path = require('path');
 const panApp = require('../panApp');
+const peerStatus = require('./peerStatus');
 const { log } = require('../utils/log');
 
 const PAN_ROOT_ID = "219dd24f-63c4-5e35-b886-da1b21ecc0e0";
-const setNodeId = panApp.getNodeIdSetter();
+const setNodeId = peerStatus.getNodeIdSetter();
 
 let nodeId = null;
 let persistPath = null;
