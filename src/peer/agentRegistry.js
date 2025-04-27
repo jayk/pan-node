@@ -30,15 +30,16 @@ function initialize(config = {}) {
     /**
      * Find an agent that supports the given capability.
      * @param {string} capability
-     * @returns {string|null} agentId
+     * @returns {array} agentIds
      */
-    function findAgentByCapability(capability) {
+    function findAgentsByCapability(capability) {
+        const matches = [];
         for (const [agentId, info] of agents.entries()) {
             if (info.capabilities.includes(capability)) {
-                return agentId;
+                matches.push(agentId);
             }
         }
-        return null;
+        return matches;
     }
 
     /**
