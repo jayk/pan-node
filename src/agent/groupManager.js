@@ -1,10 +1,10 @@
-// node/client/groupManager.js
+// node/agent/groupManager.js
 
 const MAX_MSG_TYPES = 100;
 
 async function initialize(config = {}) {
   const groups = new Map(); // groupId → msgType → Set(connIds)
-  const clientSubscriptions = new Map(); // connId → groupId → Set(msgTypes)
+  const agentSubscriptions = new Map(); // connId → groupId → Set(msgTypes)
 
   const joinGroup = (connId, groupId, msgTypes) => {
     if (!Array.isArray(msgTypes) || msgTypes.length === 0) {
@@ -15,18 +15,18 @@ async function initialize(config = {}) {
       groups.set(groupId, new Map());
     }
 
-    if (!clientSubscriptions.has(connId)) {
-      clientSubscriptions.set(connId, new Map());
+    if (!agentSubscriptions.has(connId)) {
+      agentSubscriptions.set(connId, new Map());
     }
 
     const groupMap = groups.get(groupId);
-    const clientGroupSubs = clientSubscriptions.get(connId);
+    const agentGroupSubs = agentSubscriptions.get(connId);
 
-    if (!clientGroupSubs.has(groupId)) {
-      clientGroupSubs.set(groupId, new Set());
+    if (!agentGroupSubs.has(groupId)) {
+      agentGroupSubs.set(groupId, new Set());
     }
 
-    const existingTypes = clientGroupSubs.get(groupId);
+    const existingTypes = agentGroupSubs.get(groupId);
     msgTypes.forEach((msgType) => {
       if (!groupMap.has(msgType)) {
         groupMap.set(msgType, new Set());
@@ -36,17 +36,17 @@ async function initialize(config = {}) {
     });
 
     if (existingTypes.size > MAX_MSG_TYPES) {
-      throw new Error('Exceeded max 100 msg_types for this client in this group');
+      throw new Error('Exceeded max 100 msg_types for this agent in this group');
     }
   };
 
   const leaveGroup = (connId, groupId) => {
-    const clientGroupSubs = clientSubscriptions.get(connId);
+    const agentGroupSubs = agentSubscriptions.get(connId);
     const groupMap = groups.get(groupId);
 
-    if (!clientGroupSubs || !groupMap) return;
+    if (!agentGroupSubs || !groupMap) return;
 
-    const msgTypes = clientGroupSubs.get(groupId);
+    const msgTypes = agentGroupSubs.get(groupId);
     if (msgTypes) {
       for (const msgType of msgTypes) {
         const set = groupMap.get(msgType);
@@ -57,15 +57,15 @@ async function initialize(config = {}) {
           }
         }
       }
-      clientGroupSubs.delete(groupId);
+      agentGroupSubs.delete(groupId);
     }
 
     if (groupMap.size === 0) {
       groups.delete(groupId);
     }
 
-    if (clientGroupSubs.size === 0) {
-      clientSubscriptions.delete(connId);
+    if (agentGroupSubs.size === 0) {
+      agentSubscriptions.delete(connId);
     }
   };
 
@@ -74,13 +74,13 @@ async function initialize(config = {}) {
     return groupMap?.get(msgType) || new Set();
   };
 
-  const getClientGroups = (connId) => {
-    const subs = clientSubscriptions.get(connId);
+  const getAgentGroups = (connId) => {
+    const subs = agentSubscriptions.get(connId);
     return subs ? Array.from(subs.keys()) : [];
   };
 
-  const removeClientFromAllGroups = (connId) => {
-    const groupIds = getClientGroups(connId);
+  const removeAgentFromAllGroups = (connId) => {
+    const groupIds = getAgentGroups(connId);
     for (const groupId of groupIds) {
       leaveGroup(connId, groupId);
     }
@@ -90,11 +90,11 @@ async function initialize(config = {}) {
     joinGroup,
     leaveGroup,
     getGroupRecipients,
-    getClientGroups,
-    removeClientFromAllGroups,
+    getAgentGroups,
+    removeAgentFromAllGroups,
     shutdown: async () => {
       groups.clear();
-      clientSubscriptions.clear();
+      agentSubscriptions.clear();
     }
   };
 }

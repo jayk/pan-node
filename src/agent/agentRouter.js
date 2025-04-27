@@ -1,9 +1,9 @@
-// node/client/clientRouter.js
+// node/agent/agentRouter.js
 
 const panApp = require('../panApp');
 const { log } = require('../utils/log');
 const nodeMessages = require('../utils/nodeMessages');
-const clientControl = require('./clientControl');
+const agentControl = require('./agentControl');
 
 async function initialize(config = {}) {
   const router = {
@@ -12,7 +12,7 @@ async function initialize(config = {}) {
 
       switch (msg.type) {
         case 'control':
-          return clientControl.processControl(conn, msg);
+          return agentControl.processControl(conn, msg);
 
         case 'broadcast':
           return router.deliverBroadcast(conn, msg);
@@ -29,7 +29,7 @@ async function initialize(config = {}) {
       const { group: groupId, msg_type: msgType } = msg;
       const nodeId = panApp.getNodeId();
       const groupManager = panApp.use('groupManager');
-      const clientRegistry = panApp.use('clientRegistry');
+      const agentRegistry = panApp.use('agentRegistry');
 
       const recipients = groupManager.getGroupRecipients(groupId, msgType);
       if (!recipients || recipients.size === 0) {
@@ -37,13 +37,13 @@ async function initialize(config = {}) {
       } else {
         for (const connId of recipients) {
           if (connId === fromConn.id) continue;
-          const target = clientRegistry.getClient(connId);
+          const target = agentRegistry.getAgent(connId);
           if (target) target.send(msg);
         }
       }
 
       // Send to peer router for relaying to other nodes
-      nodeMessages.emit('outbound:client_broadcast', {
+      nodeMessages.emit('outbound:agent_broadcast', {
         from: {
             node_id: nodeId,
             conn_id: fromConn.id
@@ -55,7 +55,7 @@ async function initialize(config = {}) {
     deliverDirect(fromConn, msg) {
       const to = msg.to;
       const nodeId = panApp.getNodeId();
-      const clientRegistry = panApp.use('clientRegistry');
+      const agentRegistry = panApp.use('agentRegistry');
 
       if (!to || typeof to !== 'object' || !to.node_id || !to.conn_id) {
         return fromConn.sendError('invalid "to" field in direct message', msg);
@@ -63,12 +63,15 @@ async function initialize(config = {}) {
 
       if (to.node_id === nodeId) {
         // Local delivery
-        const targetClient = clientRegistry.getClient(to.conn_id);
-        if (!targetClient?.ws?.conn) {
-          return fromConn.sendError(`client ${to.conn_id} not found on node ${nodeId}`, msg);
+        const targetAgent = agentRegistry.getAgent(to.conn_id);
+        // don't think this check makes sense.
+/*
+        if (!targetAgent?.ws?.conn) {
+          return fromConn.sendError(`agent ${to.conn_id} not found on node ${nodeId}`, msg);
         }
+*/
 
-        targetClient.send({
+        targetAgent.send({
           type: 'direct',
           msg_type: msg.msg_type,
           in_response_to: msg.msg_id,
@@ -80,7 +83,7 @@ async function initialize(config = {}) {
         });
       } else {
         // Relay to peer router via async bus
-          nodeMessages.emit('outbound:client_direct', {
+          nodeMessages.emit('outbound:agent_direct', {
           from: fromConn,
           message: msg
         });
@@ -88,7 +91,7 @@ async function initialize(config = {}) {
     },
 
     shutdown: async () => {
-      log.info('[clientRouter] Shutdown complete');
+      log.info('[agentRouter] Shutdown complete');
     }
   };
 

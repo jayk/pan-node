@@ -1,6 +1,6 @@
-// node/clientControl.js
+// node/agentControl.js
 const panApp = require('../panApp');
-const { validateClientMessage } = require('../utils/validators');
+const { validateAgentMessage } = require('../utils/validators');
 const { validate: isUuid } = require('uuid');
 const nodeMessages = require('../utils/nodeMessages');
 const { log } = require('../utils/log');
@@ -33,7 +33,7 @@ function handleJoinGroup(conn, msg) {
         }
     }, msg);
 
-    log.info(`Client ${connId} joined group ${group}`);
+    log.info(`Agent ${connId} joined group ${group}`);
 }
 
 function handleLeaveGroup(conn, msg) {
@@ -63,7 +63,7 @@ function handleLeaveGroup(conn, msg) {
         }
     }, msg);
 
-    log.info(`Client ${connId} left group ${group}`);
+    log.info(`Agent ${connId} left group ${group}`);
 }
 
 
@@ -105,26 +105,26 @@ function handlePing(conn, msg) {
   }
 
   // Valid ping — relay to peer router (via nodeMessages for async decoupling)
-  nodeMessages.emit('outbound:client_ping', msg);
+  nodeMessages.emit('outbound:agent_ping', msg);
 }
 
 function handleDisconnect(conn, msg) {
-    log.info(`Client ${conn.id} requested disconnect`);
+    log.info(`Agent ${conn.id} requested disconnect`);
 
     // Immediate cleanup
-    cleanClient(conn);
+    cleanAgent(conn);
 
     // Close the socket
     conn.ws.close(); // triggers `ws.on('close')` but it's now a no-op
 }
 
-function cleanupClient(conn) {
+function cleanupAgent(conn) {
     const groupManager = panApp.use('groupManager');
-    const clientRegistry = panApp.use('clientRegistry');
-    log.info(`Cleaning up after client ${conn.id}`);
+    const agentRegistry = panApp.use('agentRegistry');
+    log.info(`Cleaning up after agent ${conn.id}`);
 
-    groupManager.removeClientFromAllGroups(conn.id);
-    clientRegistry.unregisterClient(conn.id);
+    groupManager.removeAgentFromAllGroups(conn.id);
+    agentRegistry.unregisterAgent(conn.id);
 }
 
 function processControl(conn, msg) {
@@ -142,7 +142,7 @@ function processControl(conn, msg) {
             handleDisconnect(conn, msg);
             break;
         default:
-            conn.sendError(`unknown client message type: ${msg.msg_type}`, msg);
+            conn.sendError(`unknown agent message type: ${msg.msg_type}`, msg);
             break;
     } 
 }
@@ -151,5 +151,5 @@ function processControl(conn, msg) {
 
 module.exports = {
     processControl,
-    cleanupClient
+    cleanupAgent
 }

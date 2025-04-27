@@ -1,12 +1,12 @@
-// node/clientDispatcher.js
-const clientRegistry = require('./clientRegistry');
+// node/agentDispatcher.js
+const agentRegistry = require('./agentRegistry');
 const groupManager = require('./groupManager');
 const log = require('../utils/log');
 const uuid = require('uuid');
 
 const PAN_ROOT_ID="219dd24f-63c4-5e35-b886-da1b21ecc0e0";
 
-const clientDispatcher = {
+const agentDispatcher = {
     _initialized: false,
     nodeId: null,
     recentMessages: new Set(), // placeholder for msg_id deduping
@@ -18,7 +18,7 @@ const clientDispatcher = {
             this.nodeId = uuid.v4();
         }
         this._initialized = true;
-        log.info(`PAN client Dispatcher initialized with nodeId=${this.nodeId}`);
+        log.info(`PAN agent Dispatcher initialized with nodeId=${this.nodeId}`);
     },
 
     _ensureInitialized() {
@@ -51,9 +51,9 @@ const clientDispatcher = {
             return;
         }
 
-        for (const clientId of recipients) {
-            const target = clientRegistry.getClient(clientId);
-            if (target && clientId !== pan.id) {
+        for (const agentId of recipients) {
+            const target = agentRegistry.getAgent(agentId);
+            if (target && agentId !== pan.id) {
                 target.send(msg);
             }
         }
@@ -65,24 +65,24 @@ const clientDispatcher = {
 
         const to = msg.to;
 
-        if (!to || typeof to !== 'object' || !to.node_id || !to.client_id) {
+        if (!to || typeof to !== 'object' || !to.node_id || !to.conn_id) {
             return fromPan.sendError('invalid "to" field in direct message', msg);
         }
 
         if (to.node_id === this.nodeId) {
             // Local delivery
-            const targetClient = clientRegistry.getClient(to.client_id);
-            if (!targetClient?.ws?.pan) {
-                return fromPan.sendError(`client ${to.client_id} not found on node ${this.nodeId}`, msg);
+            const targetAgent = agentRegistry.getAgent(to.conn_id);
+            if (!targetAgent?.ws?.pan) {
+                return fromPan.sendError(`agent ${to.conn_id} not found on node ${this.nodeId}`, msg);
             }
 
-            targetClient.ws.pan.send({
+            targetAgent.ws.pan.send({
                 type: 'direct',
                 msg_type: msg.msg_type,
                 in_response_to: msg.msg_id,
                 from: {
                     node_id: this.nodeId,
-                    client_id: fromPan.id
+                    conn_id: fromPan.id
                 },
                 payload: msg.payload
             });
@@ -140,4 +140,4 @@ const clientDispatcher = {
 
 };
 
-module.exports = clientDispatcher;
+module.exports = agentDispatcher;

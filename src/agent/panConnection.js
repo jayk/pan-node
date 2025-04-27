@@ -31,7 +31,7 @@ function createPanConnection(ws, type, name) {
 
     const conn = {
         id,
-        type, // 'client' or 'node'
+        type, // 'agent' or 'node'
         name,
         ws,
         groups: new Set(),

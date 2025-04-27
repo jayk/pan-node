@@ -1,11 +1,11 @@
-// node/client/clientServer.js
+// node/agent/agentServer.js
 
 const { createServer } = require('http');
 const WebSocket = require('ws');
 const jwt = require('../utils/jwt');
 const uuid = require('uuid');
 const { log } = require('../utils/log');
-const { cleanupClient } = require('./clientControl');
+const { cleanupAgent } = require('./agentControl');
 const handleNodeMessage = require('../utils/nodeMessages');
 const { createPanConnection, rawSendControl, rawSendError } = require('./panConnection');
 const panApp = require('../panApp');
@@ -13,7 +13,7 @@ const panApp = require('../panApp');
 const DEFAULT_CLIENT_PORT = 5295;
 const MAX_MESSAGE_BYTES = 61440; // 60KB safe limit for JSON messages
 const cleanupTimeouts = new Map();
-const { validateIncomingClientMessage } = require('../utils/validators');
+const { validateIncomingAgentMessage } = require('../utils/validators');
 const spamProtector = require('../utils/spamProtector');
 
 
@@ -33,6 +33,7 @@ function handleWebSocket(ws, req, config) {
   ws.on('message', async (msgBuffer) => {
     const now = Date.now();
     const spamResult = spamProtector.track(ws, spamConfig);
+    const nodeId = panApp.getNodeId();
     if (spamResult.violation) {
       ws.spamViolations = (ws.spamViolations || 0) + 1;
       rawSendControl(ws, {
@@ -44,7 +45,7 @@ function handleWebSocket(ws, req, config) {
       });
 
       if (ws.spamViolations >= spamResult.disconnect_threshold) {
-        log.warn(`[client] Disconnecting client for repeated spam: ${ws.conn?.id || 'unauthenticated'}`);
+        log.warn(`[agent] Disconnecting agent for repeated spam: ${ws.conn?.id || 'unauthenticated'}`);
         return ws.close();
       }
 
@@ -52,7 +53,7 @@ function handleWebSocket(ws, req, config) {
     }
 
     if (msgBuffer.length > MAX_MESSAGE_BYTES) {
-      log.warn(`[client] Message too large: ${msgBuffer.length} bytes. Limit is ${MAX_MESSAGE_BYTES}.`);
+      log.warn(`[agent] Message too large: ${msgBuffer.length} bytes. Limit is ${MAX_MESSAGE_BYTES}.`);
       return rawSendControl(ws, {
         msg_type: 'bad_packet',
         payload: { 
@@ -66,8 +67,8 @@ function handleWebSocket(ws, req, config) {
       const msg = JSON.parse(msgBuffer.toString());
       log.verbose('msg: ', msg);
 
-      if (!validateIncomingClientMessage(msg)) {
-        log.verbose(`Client ${ws.conn_id} sent a bad packet: `, errors);
+      if (!validateIncomingAgentMessage(msg)) {
+        log.verbose(`Agent ${ws.conn_id} sent a bad packet: `, msg);
         ws.msg_errors++;
         ws.lastErrorTimestamp = now;
         rawSendError(ws, {
@@ -76,7 +77,7 @@ function handleWebSocket(ws, req, config) {
         });
 
         if (ws.msg_errors > MAX_ERRORS_BEFORE_DISCONNECT) {
-          log.error(`Client ${ws.conn_id} disconnected: too many errors`);
+          log.error(`Agent ${ws.conn_id} disconnected: too many errors`);
           rawSendError(ws, {
             type: 'too_many_bad_messages',
             error: 'Too many bad messages received'
@@ -88,14 +89,15 @@ function handleWebSocket(ws, req, config) {
       // if we are here, we have a valid message.
       if (ws.msg_errors > 0 && (now - ws.lastErrorTimestamp) > SPAM_ERROR_RESET_WINDOW) {
         ws.msg_errors = 0;
-        log.verbose(`Client ${ws.conn_id} error count resetsent a bad packet: `, errors);
+        log.verbose(`Agent ${ws.conn_id} error count reset`);
       }
 
 
       if (!ws.conn) {
         if (msg.type === 'control' && msg.msg_type === 'auth') {
-          const { token, reconnect } = msg;
-          const clientRegistry = panApp.use('clientRegistry');
+          const { token, auth_type, reconnect } = msg.payload;
+          const agentRegistry = panApp.use('agentRegistry');
+          log.info('received auth request');
 
           const jwt_result = jwt.verifyNetworkJWT(token, config.jwt_config);
           // if we are auth'ing and our jwt decode failed, we reply and disconnect
@@ -108,8 +110,8 @@ function handleWebSocket(ws, req, config) {
           }
           // if we are here, we passed jwt decoding.
           //
-          if (reconnect?.conn_id && reconnect?.auth_key) {
-            const resumed_conn = clientRegistry.resumeClient(reconnect.conn_id, reconnect.auth_key);
+          if (auth_type == 'reconnect' && reconnect?.conn_id && reconnect?.auth_key) {
+            const resumed_conn = agentRegistry.resumeAgent(reconnect.conn_id, reconnect.auth_key);
             if (resumed) {
               resumed.reconnect(ws);
               ws.conn = resumed_conn;
@@ -120,23 +122,30 @@ function handleWebSocket(ws, req, config) {
               }
               return resumed.sendControl({
                 msg_type: 'auth.ok',
-                payload: { node_id: panApp.getNodeId(), conn_id: resumed.id }
+                payload: { 
+                  node_id: nodeId, 
+                  conn_id: resumed.id,
+                  auth_key: reconnect.auth_key,
+                  auth_type: 'reconnect'
+                }
               });
             } else {
               return rawSendError(ws, { type: 'error', message: 'Invalid resume credentials' }, msg);
             }
           }
 
-          const conn = createPanConnection(ws, 'client', jwt_result.token.client_name);
+          const conn = createPanConnection(ws, 'agent', jwt_result.token.agent_name);
           ws.conn = conn;
           ws.conn_id = conn.id;
 
-          const authKey = clientRegistry.registerClient(conn);
+          const authKey = agentRegistry.registerAgent(conn);
           return conn.sendControl({
             msg_type: 'auth.ok',
             payload: {
+              node_id: nodeId,
               conn_id: conn.id,
-              auth_key: authKey
+              auth_key: authKey,
+              auth_type: 'standard'
             }
           });
         }
@@ -149,18 +158,17 @@ function handleWebSocket(ws, req, config) {
 
       const conn = ws.conn;
 
-      if (conn.type === 'client') {
-        let nodeId = panApp.getNodeId();
+      if (conn.type === 'agent') {
 
-        const clientRouter = panApp.use('clientRouter');
+        const agentRouter = panApp.use('agentRouter');
         // force from node id and conn id
         if (msg.from.conn_id != conn.id) {
-            log.error(`Client ${ws.conn.id} tried to send with a different conn_id, closing connection`);
+            log.error(`Agent ${ws.conn.id} tried to send with a different conn_id, closing connection`);
             ws.close();
             return;
         }
         if (msg.from.node_id != nodeId) {
-            log.error(`Client ${ws.conn.id} tried to send with a different node_id, closing connection`);
+            log.error(`Agent ${ws.conn.id} tried to send with a different node_id, closing connection`);
             ws.close();
             return;
         }
@@ -171,7 +179,7 @@ function handleWebSocket(ws, req, config) {
             conn_id: conn.id
         };
         //log.error(JSON.stringify(msg.from));
-        await clientRouter.handleMessage(conn, msg);
+        await agentRouter.handleMessage(conn, msg);
       } else if (conn.type === 'node') {
         await handleNodeMessage(conn, msg);
       }
@@ -184,15 +192,15 @@ function handleWebSocket(ws, req, config) {
   });
 
   ws.on('close', () => {
-    if (ws.conn?.type === 'client') {
-      const clientRegistry = panApp.use('clientRegistry');
-      if (!clientRegistry.getClient(ws.conn.id)) return;
+    if (ws.conn?.type === 'agent') {
+      const agentRegistry = panApp.use('agentRegistry');
+      if (!agentRegistry.getAgent(ws.conn.id)) return;
 
-      log.warn(`Client ${ws.conn.id} disconnected without cleanup - starting resume timer`);
+      log.warn(`Agent ${ws.conn.id} disconnected without cleanup - starting resume timer`);
 
       const countdown_timeout = setTimeout(() => {
         cleanupTimeouts.delete(ws.conn.id);
-        cleanupClient(ws.conn);
+        cleanupAgent(ws.conn);
       }, 2 * 60 * 1000);
 
       cleanupTimeouts.set(ws.conn.id, countdown_timeout);
@@ -211,24 +219,24 @@ async function initialize(config = {}) {
   });
 
   httpServer.listen(port, () => {
-    log.info(`[client] PAN node listening for clients on ws://localhost:${port}`);
+    log.info(`[agent] PAN node listening for agents on ws://localhost:${port}`);
   });
 
   return {
     shutdown: async () => {
-      log.info('[client] Shutting down client WebSocket server...');
+      log.info('[agent] Shutting down agent WebSocket server...');
       return new Promise((resolve, reject) => {
         wss.close((err) => {
           if (err) {
-            log.error('[client] Error closing WebSocket server:', err);
+            log.error('[agent] Error closing WebSocket server:', err);
             reject(err);
           } else {
             httpServer.close((err2) => {
               if (err2) {
-                log.error('[client] Error closing HTTP server:', err2);
+                log.error('[agent] Error closing HTTP server:', err2);
                 reject(err2);
               } else {
-                log.info('[client] Client server fully shut down');
+                log.info('[agent] Agent server fully shut down');
                 resolve();
               }
             });
@@ -237,10 +245,10 @@ async function initialize(config = {}) {
       });
     },
     getStatus: () => {
-      const clientRegistry = panApp.use('clientRegistry');
+      const agentRegistry = panApp.use('agentRegistry');
       return {
         port,
-        connectedClients: clientRegistry.getClientCount?.() || 0
+        connectedAgents: agentRegistry.getAgentCount?.() || 0
       };
     }
   };
