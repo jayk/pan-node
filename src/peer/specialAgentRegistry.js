@@ -1,4 +1,4 @@
-// agentRegistry.js
+// specialAgentRegistry.js
 // Tracks connected special agents and their declared capabilities.
 
 function initialize(config = {}) {
@@ -65,7 +65,7 @@ function initialize(config = {}) {
         registerAgent,
         unregisterAgent,
         getAgentInfo,
-        findAgentByCapability,
+        findAgentsByCapability,
         listAgents,
         shutdown,
     };

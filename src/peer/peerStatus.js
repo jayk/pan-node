@@ -65,6 +65,8 @@ module.exports = {
   setGateway,
   setClusterheadAgent,
   getStatus,
+  getNodeId,
   getNodeIdSetter
+
 };
 
