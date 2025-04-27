@@ -1,25 +1,10 @@
 // panApp.js
+const peerStatus = require('./peer/peerStatus');
 
 const pan = {};
 
-const NODE_ID_SYMBOL = Symbol('nodeId');
-let _nodeSetterGiven = false;
-
 function getNodeId() {
-    return pan[nodeIdSymbol];
-}
-
-function getNodeIdSetter() {
-    if (_nodeSetterGiven) throw new Error('Access Denied to NodeID Setter');
-    _nodeSetterGiven = true;
-
-    return function setNodeId(value) {
-        pan[NODE_ID_SYMBOL] = value;
-    };
-}
-
-function getNodeId() {
-  return pan[NODE_ID_SYMBOL]
+    return peerStatus.getNodeId();
 }
 
 function setSubsystem(name, instance) {
@@ -40,5 +25,4 @@ module.exports = {
   use,
   getAll,
   getNodeId,
-  getNodeIdSetter
 };
