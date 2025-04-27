@@ -88,11 +88,8 @@ const clientDispatcher = {
             });
         } else {
             // Remote delivery (relay to peer node)
-            if (!this.peerRegistry || !this.peerRegistry.sendToNode) {
-                return fromPan.sendError(`peerRegistry not configured; can't route to node ${to.node_id}`, msg);
-            }
-
-            this.peerRegistry.sendToNode(to.node_id, msg, fromPan);
+            
+            // relay to peerRouter. TBD
         }
     },
 
