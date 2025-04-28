@@ -1,4 +1,4 @@
-const { validateIncomingClientMessage } = require('../utils/validators');
+const { validateIncomingAgentMessage } = require('../utils/validators');
 const { log } = require('../utils/log');
 const panApp = require('../panApp');
 

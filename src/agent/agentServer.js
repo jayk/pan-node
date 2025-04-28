@@ -10,7 +10,7 @@ const handleNodeMessage = require('../utils/nodeMessages');
 const { createPanConnection, rawSendControl, rawSendError } = require('./panConnection');
 const panApp = require('../panApp');
 
-const DEFAULT_CLIENT_PORT = 5295;
+const DEFAULT_AGENT_PORT = 5295;
 const MAX_MESSAGE_BYTES = 61440; // 60KB safe limit for JSON messages
 const cleanupTimeouts = new Map();
 const { validateIncomingAgentMessage } = require('../utils/validators');
@@ -95,64 +95,77 @@ function handleWebSocket(ws, req, config) {
 
       if (!ws.conn) {
         if (msg.type === 'control' && msg.msg_type === 'auth') {
-          const { token, auth_type, reconnect } = msg.payload;
           const agentRegistry = panApp.use('agentRegistry');
+          const agentAuthManager = panApp.use('agentAuthManager');
           log.info('received auth request');
 
-          const jwt_result = jwt.verifyNetworkJWT(token, config.jwt_config);
-          // if we are auth'ing and our jwt decode failed, we reply and disconnect
-          if (!jwt_result.success) {
-            rawSendError(ws, {
-                type: "auth.failed",
-                message: "authorization failed"
-            }, msg);
-            return ws.close();
-          }
-          // if we are here, we passed jwt decoding.
-          //
-          if (auth_type == 'reconnect' && reconnect?.conn_id && reconnect?.auth_key) {
-            const resumed_conn = agentRegistry.resumeAgent(reconnect.conn_id, reconnect.auth_key);
-            if (resumed) {
-              resumed.reconnect(ws);
-              ws.conn = resumed_conn;
-              const countdown_timeout = cleanupTimeouts.get(resumed.id);
-              if (countdown_timeout) {
-                clearTimeout(countdown_timeout);
-                cleanupTimeouts.delete(resumed.id);
-              }
-              return resumed.sendControl({
-                msg_type: 'auth.ok',
+          agentAuthManager.submitAuthRequest(msg.payload, (result) => { 
+              if (!result.success) { 
+                rawSendControl(ws, {
+                    msg_type: 'auth.failed',
+                    payload: {
+                        message: result.error || "authorization failed"
+                    }
+                });
+                return ws.close(); 
+              } 
+
+              let new_conn;
+              let final_auth_key;
+
+              if (msg.payload.auth_type === 'reconnect' && msg.payload.reconnect?.conn_id && msg.payload.reconnect?.auth_key) { 
+                new_conn = agentRegistry.resumeAgent(msg.payload.reconnect.conn_id, msg.payload.reconnect.auth_key); 
+                if (new_conn) { 
+                  new_conn.reconnect(ws); 
+
+                  const countdown_timeout = cleanupTimeouts.get(new_conn.id); 
+                  if (countdown_timeout) { 
+                    clearTimeout(countdown_timeout); 
+                    cleanupTimeouts.delete(new_conn.id); 
+                  } 
+
+                  final_auth_key = msg.payload.reconnect.auth_key;
+                } else { 
+                    rawSendControl(ws, {
+                        msg_type: 'auth.failed',
+                        payload: {
+                            message: 'Invalid resume credentials' 
+                        }
+                    }, msg);
+                    return ws.close();
+                } 
+              } else { 
+                const agentName = result.info?.agent_name || msg.payload.agent_name || 'unknown';
+                new_conn = createPanConnection(ws, 'agent', agentName);
+
+                final_auth_key = agentRegistry.registerAgent(new_conn);
+              } 
+
+              ws.conn = new_conn; 
+              ws.conn_id = new_conn.id; 
+              log.info(`[agentServer] Agent connected: conn_id=${new_conn.id} auth_type=${msg.payload.auth_type || 'standard'}`);
+
+
+              return new_conn.sendControl({ 
+                msg_type: 'auth.ok', 
                 payload: { 
                   node_id: nodeId, 
-                  conn_id: resumed.id,
-                  auth_key: reconnect.auth_key,
-                  auth_type: 'reconnect'
-                }
-              });
-            } else {
-              return rawSendError(ws, { type: 'error', message: 'Invalid resume credentials' }, msg);
-            }
-          }
-
-          const conn = createPanConnection(ws, 'agent', jwt_result.token.agent_name);
-          ws.conn = conn;
-          ws.conn_id = conn.id;
-
-          const authKey = agentRegistry.registerAgent(conn);
-          return conn.sendControl({
-            msg_type: 'auth.ok',
-            payload: {
-              node_id: nodeId,
-              conn_id: conn.id,
-              auth_key: authKey,
-              auth_type: 'standard'
-            }
+                  conn_id: new_conn.id, 
+                  auth_key: final_auth_key, 
+                  auth_type: msg.payload.auth_type || 'standard' 
+                } 
+              }, msg); 
           });
+
+
+          return;
         }
 
-        return rawSendError(ws, {
-          type: 'auth.failed',
-          message: 'Authorization required'
+        return rawSendControl(ws, {
+          msg_type: 'auth.failed',
+          payload: {
+            message: 'Authorization required'
+          }
         }, msg);
       }
 
@@ -211,7 +224,7 @@ function handleWebSocket(ws, req, config) {
 async function initialize(config = {}) {
   const httpServer = createServer();
   const wss = new WebSocket.Server({ server: httpServer });
-  const port = config.port || DEFAULT_CLIENT_PORT;
+  const port = config.port || DEFAULT_AGENT_PORT;
 
   wss.on('connection', (ws, req) => {
     log.info('Incoming WebSocket connection');

@@ -39,15 +39,15 @@ function createPanConnection(ws, type, name) {
         send(data) {
             if (!data.msg_id) data.msg_id = uuid.v4();
             log.verbose("Sending Data:", data);
-            ws.send(JSON.stringify(data));
+            this.ws.send(JSON.stringify(data));
         },
 
         sendControl(data, original = {}) {
-            return rawSendControl(ws, data, original);
+            return rawSendControl(this.ws, data, original);
         },
 
         sendError(error, original = {}) {
-            return rawSendError(ws, error, original);
+            return rawSendError(this.ws, error, original);
         },
 
         respondTo(msg, type, payload) {
@@ -57,7 +57,7 @@ function createPanConnection(ws, type, name) {
                 payload
             };
             log.verbose('responding to '+msg.msg_id, response);
-            ws.send(JSON.stringify(response));
+            this.ws.send(JSON.stringify(response));
         },
 
         reconnect(newWs) {

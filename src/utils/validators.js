@@ -6,11 +6,13 @@
 //
 // Usage:
 // - First call the appropriate validateIncomingXMessage(msg)
-//   - validateIncomingClientMessage(msg)
+//   - validateIncomingAgentMessage(msg)
 //   - validateIncomingAgentMessage(msg, localNodeId)
 //   - validateIncomingPeerMessage(msg)
 // - These return `true` (valid) or `false` (invalid)
 // - If invalid, immediately close the connection.
+const { log } = require('./log');
+const constants = require('../constants/constants');
 
 const VALID_MSG_TYPE = /^[\w.@]+$/u;
 
@@ -22,7 +24,8 @@ const MIN_AGENT_TTL = 0;
 
 const EXTENDED_GROUP_ID_LENGTH = 73; // node_id (36) + ":" (1) + uuid (36)
 
-const messageTypes = require('../constants/messageTypes');
+const FORCE_DEBUGGING = true;
+
 
 // Ultra-fast "looks like a UUID" checker
 function isFastUuid(str) {
@@ -36,25 +39,34 @@ function isFastUuid(str) {
 
 // --- Universal basic field validation ---
 function isValidBaseFields(msg, { isAgent = false } = {}) {
+    FORCE_DEBUGGING && log.verbose('msg check');
     if (typeof msg !== 'object' || msg === null) return false;
+    FORCE_DEBUGGING && log.verbose('msg_id check');
     if (typeof msg.msg_id !== 'string' || !isFastUuid(msg.msg_id)) return false;
+    FORCE_DEBUGGING && log.verbose('msg from object check');
     if (typeof msg.from !== 'object' || msg.from === null) return false;
+    FORCE_DEBUGGING && log.verbose('msg from node_id check');
     if (typeof msg.from.node_id !== 'string' || !isFastUuid(msg.from.node_id)) return false;
+    FORCE_DEBUGGING && log.verbose('msg from conn_id check');
     if (typeof msg.from.conn_id !== 'string') return false;
+    FORCE_DEBUGGING && log.verbose('msg from msg_type check');
     if (typeof msg.msg_type !== 'string' || msg.msg_type.length > 64 || !VALID_MSG_TYPE.test(msg.msg_type)) return false;
+    FORCE_DEBUGGING && log.verbose('msg payload check');
     if (typeof msg.payload !== 'object' || msg.payload === null) return false;
 
+    FORCE_DEBUGGING && log.verbose('msg ttl check');
     const ttl = Number(msg.ttl);
     const minTtl = isAgent ? MIN_AGENT_TTL : MIN_TTL;
     const maxTtl = isAgent ? MAX_AGENT_TTL : MAX_TTL;
     if (!Number.isInteger(ttl) || ttl < minTtl || ttl > maxTtl) return false;
 
+    FORCE_DEBUGGING && log.verbose('ran the gauntlet');
     return true;
 }
 
-// --- Client-specific validation ---
-function validateClientMessage(msg) {
-    if (!messageTypes.VALID_CLIENT_MESSAGE_TYPES.includes(msg.type)) return false;
+// --- Agent-specific validation ---
+function validateAgentMessage(msg) {
+    if (!constants.VALID_AGENT_MESSAGE_TYPES.includes(msg.type)) return false;
 
     switch (msg.type) {
         case 'direct':
@@ -75,8 +87,8 @@ function validateClientMessage(msg) {
 }
 
 // --- Special agent-specific validation ---
-function validateAgentMessage(msg, localNodeId) {
-    if (!messageTypes.VALID_AGENT_MESSAGE_TYPES.includes(msg.type)) return false;
+function validateSpecialAgentMessage(msg, localNodeId) {
+    if (!constants.VALID_AGENT_MESSAGE_TYPES.includes(msg.type)) return false;
 
     switch (msg.type) {
         case 'direct':
@@ -99,7 +111,7 @@ function validateAgentMessage(msg, localNodeId) {
 
 // --- Peer-specific validation ---
 function validatePeerMessage(msg) {
-    if (!messageTypes.VALID_PEER_MESSAGE_TYPES.includes(msg.type)) return false;
+    if (!constants.VALID_PEER_MESSAGE_TYPES.includes(msg.type)) return false;
 
     // No extra peer fields beyond base validation at this time
     return true;
@@ -107,12 +119,12 @@ function validatePeerMessage(msg) {
 
 // --- Public functions for fast validation of incoming messages ---
 
-function validateIncomingClientMessage(msg) {
+function validateIncomingAgentMessage(msg) {
     return isValidBaseFields(msg, { isAgent: false }) &&
-           validateClientMessage(msg);
+           validateAgentMessage(msg);
 }
 
-function validateIncomingAgentMessage(msg, localNodeId) {
+function validateIncomingSpecialAgentMessage(msg, localNodeId) {
     return isValidBaseFields(msg, { isAgent: true }) &&
            validateAgentMessage(msg, localNodeId);
 }
@@ -125,10 +137,10 @@ function validateIncomingPeerMessage(msg) {
 module.exports = {
     isFastUuid,
     isValidBaseFields,
-    validateClientMessage,
+    validateAgentMessage,
     validateAgentMessage,
     validatePeerMessage,
-    validateIncomingClientMessage,
+    validateIncomingAgentMessage,
     validateIncomingAgentMessage,
     validateIncomingPeerMessage
 };

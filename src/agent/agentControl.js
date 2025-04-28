@@ -9,7 +9,7 @@ const { log } = require('../utils/log');
 function handleJoinGroup(conn, msg) {
     const groupManager = panApp.use('groupManager');
     const connId = conn.id;
-    const { group, msg_types } = msg;
+    const { group, msg_types } = msg.payload;
 
 
     if (typeof group !== 'string') {
@@ -39,7 +39,7 @@ function handleJoinGroup(conn, msg) {
 function handleLeaveGroup(conn, msg) {
     const groupManager = panApp.use('groupManager');
     const connId = conn.id;
-    const { group } = msg;
+    const { group } = msg.payload;
 
 
     if (typeof group !== 'string') {

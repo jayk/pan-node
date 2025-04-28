@@ -2,7 +2,7 @@
 const assert = require('assert');
 
 const {
-    validateIncomingClientMessage,
+    validateIncomingAgentMessage,
     validateIncomingAgentMessage,
     validateIncomingPeerMessage
 } = require('../utils/validators.js'); // Adjust path as needed
@@ -11,9 +11,9 @@ const localNodeId = '12345678-1234-1234-1234-1234567890ab'; // Fake local nodeId
 
 describe('PAN Validators', function() {
 
-    describe('Client Messages', function() {
+    describe('Agent Messages', function() {
 
-        it('should accept a valid direct client message', function() {
+        it('should accept a valid direct agent message', function() {
             const msg = {
                 type: 'direct',
                 msg_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
@@ -23,10 +23,10 @@ describe('PAN Validators', function() {
                 ttl: 10,
                 to: { node_id: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff', conn_id: 'conn456' }
             };
-            assert.strictEqual(validateIncomingClientMessage(msg), true);
+            assert.strictEqual(validateIncomingAgentMessage(msg), true);
         });
 
-        it('should reject a direct client message missing "to"', function() {
+        it('should reject a direct agent message missing "to"', function() {
             const msg = {
                 type: 'direct',
                 msg_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
@@ -36,7 +36,7 @@ describe('PAN Validators', function() {
                 ttl: 10
                 // no to field
             };
-            assert.strictEqual(validateIncomingClientMessage(msg), false);
+            assert.strictEqual(validateIncomingAgentMessage(msg), false);
         });
     });
 

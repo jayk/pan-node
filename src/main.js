@@ -9,10 +9,13 @@ const panApp = require('./panApp');
 const nodeMessages = require('./utils/nodeMessages');
 const peerServer = require('./peer/peerServer');
 const peerRouter = require('./peer/peerRouter');
-const clientRouter = require('./client/clientRouter');
-const clientServer = require('./client/clientServer');
-const groupManager = require('./client/groupManager');
-const clientRegistry = require('./client/clientRegistry');
+const agentRouter = require('./agent/agentRouter');
+const agentServer = require('./agent/agentServer');
+const groupManager = require('./agent/groupManager');
+const peerRegistry = require('./peer/peerRegistry');
+const agentRegistry = require('./agent/agentRegistry');
+const specialAgentRegistry = require('./peer/specialAgentRegistry');
+const agentAuthManager = require('./node/agentAuthManager');
 
 let nodeStarted = false;
 
@@ -45,13 +48,13 @@ async function startNode(providedConfig = null) {
   initializeLogger(config.logging);
 
   log.info('🔧 Initializing peer registry...');
-  panApp.setSubsystem('peerRegistry', await require('./peer/peerRegistry').initialize(config.peer_registry || {}));
+  panApp.setSubsystem('peerRegistry', await peerRegistry.initialize(config.peer_registry || {}));
+
+  log.info('🔧 Initializing special agent registry...');
+  panApp.setSubsystem('specialAgentRegistry', await specialAgentRegistry.initialize(config.special_agent_registry || {}));
 
   log.info('🔧 Initializing agent registry...');
-  panApp.setSubsystem('agentRegistry', await require('./peer/agentRegistry').initialize(config.agent_registry || {}));
-
-  log.info('🔧 Initializing client registry...');
-  panApp.setSubsystem('clientRegistry', await clientRegistry.initialize(config.client_registry));
+  panApp.setSubsystem('agentRegistry', await agentRegistry.initialize(config.agent_registry));
 
   log.info('⤱  Initializing peer router...');
   panApp.setSubsystem('peerRouter', await peerRouter.initialize(config.peer_router));
@@ -60,22 +63,26 @@ async function startNode(providedConfig = null) {
   panApp.setSubsystem('peerServer', await peerServer.initialize(config.peer_server));
   log.info('✅ Peer server ready');
 
-  log.info('⚙  Initializing client router...');
-  panApp.setSubsystem('clientRouter', await clientRouter.initialize(config.client_router || {}));
+  log.info('🔒  Initializing agent auth manager...');
+  panApp.setSubsystem('agentAuthManager', agentAuthManager.initialize(config.agent_auth_manager || {}));
+
+  log.info('⚙  Initializing agent router...');
+  panApp.setSubsystem('agentRouter', await agentRouter.initialize(config.agent_router || {}));
 
   log.info('🔧 Initializing group manager...');
   panApp.setSubsystem('groupManager', await groupManager.initialize(config.group_manager));
 
 
-  log.info('🌐 Initializing client server...');
-  panApp.setSubsystem('clientServer', await clientServer.initialize(config.client_server));
-  log.info('✅ Client server ready');
+  log.info('🌐 Initializing agent server...');
+  panApp.setSubsystem('agentServer', await agentServer.initialize(config.agent_server));
+  log.info('✅ Agent server ready');
 
   nodeStarted = true;
 
   global.PAN = panApp;
 
   log.info('🎉 PAN Node fully online');
+  return panApp;
 }
 
 async function stopNode() {
@@ -90,11 +97,11 @@ async function stopNode() {
 
   const subsystems = [
     'peerServer',
-    'clientServer',
+    'agentServer',
     'peerRouter',
-    'clientRouter',
+    'agentRouter',
     'groupManager',
-    'clientRegistry'
+    'agentRegistry'
   ];
 
   for (const name of subsystems) {

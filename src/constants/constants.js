@@ -1,6 +1,6 @@
 // constants/messageTypes.js
 
-const VALID_CLIENT_MESSAGE_TYPES = [
+const VALID_AGENT_MESSAGE_TYPES = [
     'direct',
     'broadcast',
     'control'
@@ -10,7 +10,7 @@ const VALID_PEER_MESSAGE_TYPES = [
     'peer_control'
 ];
 
-const VALID_AGENT_MESSAGE_TYPES = [
+const VALID_SPECIAL_AGENT_MESSAGE_TYPES = [
     'direct',
     'broadcast',
     'agent_control'
@@ -30,9 +30,9 @@ function isNullFromField(from) {
 
 
 module.exports = {
-    VALID_CLIENT_MESSAGE_TYPES,
-    VALID_PEER_MESSAGE_TYPES,
     VALID_AGENT_MESSAGE_TYPES,
+    VALID_PEER_MESSAGE_TYPES,
+    VALID_SPECIAL_AGENT_MESSAGE_TYPES,
     NULL_ID,
     isNullId,
     isNullFromField
