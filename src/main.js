@@ -81,7 +81,7 @@ async function startNode(providedConfig = null) {
 
   global.PAN = panApp;
 
-  log.info('🎉 PAN Node fully online');
+  log.info('⭕ PAN Node fully online');
   return panApp;
 }
 
@@ -107,6 +107,7 @@ async function stopNode() {
   for (const name of subsystems) {
     const sub = panApp.use(name);
     if (sub && typeof sub.shutdown === 'function') {
+      log.info(`🚦 Stopping ${name}...`);
       shutdowns.push(sub.shutdown().catch((err) => {
         log.error(`❌ Error shutting down ${name}:`, err);
       }));
@@ -116,11 +117,20 @@ async function stopNode() {
   await Promise.all(shutdowns);
 
   nodeStarted = false;
-  log.info('✅ PAN Node stopped.');
+  log.info('⛔ PAN Node stopped.');
 }
 
 // If this script is being run directly, start the node with config file
 if (require.main === module) {
+  process.on('SIGTERM', function() {
+    log.warn('⚠️  PAN Node shutting down...');
+    stopNode().then( () => {
+        log.info('❌ PAN Node shutdown complete');
+    }).catch( e => {
+        log.info('❌❌ PAN Node shutdown failed:', e);
+    });
+  });
+
   startNode().catch(err => {
     log.error('❌ PAN Node startup failed:', err);
     process.exit(1);
