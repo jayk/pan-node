@@ -1,4 +1,11 @@
-// node/agent/agentServer.js
+/**
+ * agentServer.js
+ *
+ * This module starts a WebSocket server to handle incoming agent connections.
+ * It validates and authenticates agents, protects against spam,
+ * supports reconnection (with a grace period), and routes messages
+ * to the appropriate agentRouter or node handler.
+ */
 
 const { createServer } = require('http');
 const WebSocket = require('ws');
@@ -16,8 +23,10 @@ const cleanupTimeouts = new Map();
 const { validateIncomingAgentMessage } = require('../utils/validators');
 const spamProtector = require('../utils/spamProtector');
 
-
-
+/**
+ * Handles an individual WebSocket connection from an agent.
+ * Applies spam protection, authentication, reconnection, and message routing.
+ */
 function handleWebSocket(ws, req, config) {
   const spamConfig = config.spam_protection || {};
   const SPAM_WINDOW_SECONDS = spamConfig.window_seconds ?? 10;
@@ -30,12 +39,18 @@ function handleWebSocket(ws, req, config) {
   ws.msg_errors = 0;
   ws.conn_id = 'unknown';
 
+  /**
+   * Handles all incoming messages from the socket.
+   */
   ws.on('message', async (msgBuffer) => {
     const now = Date.now();
     const spamResult = spamProtector.track(ws, spamConfig);
     const nodeId = panApp.getNodeId();
+
+    // --- Spam check ---
     if (spamResult.violation) {
       ws.spamViolations = (ws.spamViolations || 0) + 1;
+
       rawSendControl(ws, {
         msg_type: 'speed_limit_exceeded',
         payload: {
@@ -52,6 +67,7 @@ function handleWebSocket(ws, req, config) {
       return; // drop the message
     }
 
+    // --- Message size check ---
     if (msgBuffer.length > MAX_MESSAGE_BYTES) {
       log.warn(`[agent] Message too large: ${msgBuffer.length} bytes. Limit is ${MAX_MESSAGE_BYTES}.`);
       return rawSendControl(ws, {
@@ -67,10 +83,12 @@ function handleWebSocket(ws, req, config) {
       const msg = JSON.parse(msgBuffer.toString());
       log.verbose('msg: ', msg);
 
+      // --- Message validation ---
       if (!validateIncomingAgentMessage(msg)) {
         log.verbose(`Agent ${ws.conn_id} sent a bad packet: `, msg);
         ws.msg_errors++;
         ws.lastErrorTimestamp = now;
+
         rawSendError(ws, {
           type: 'invalid_message',
           message: 'invalid message received'
@@ -78,21 +96,25 @@ function handleWebSocket(ws, req, config) {
 
         if (ws.msg_errors > MAX_ERRORS_BEFORE_DISCONNECT) {
           log.error(`Agent ${ws.conn_id} disconnected: too many errors`);
+
           rawSendError(ws, {
             type: 'too_many_bad_messages',
             error: 'Too many bad messages received'
           });
+
           return ws.close();
         }
+
         return;
       }
-      // if we are here, we have a valid message.
+
+      // --- Reset error count if window has passed ---
       if (ws.msg_errors > 0 && (now - ws.lastErrorTimestamp) > SPAM_ERROR_RESET_WINDOW) {
         ws.msg_errors = 0;
         log.verbose(`Agent ${ws.conn_id} error count reset`);
       }
 
-
+      // --- Handle authentication if not already authed ---
       if (!ws.conn) {
         if (msg.type === 'control' && msg.msg_type === 'auth') {
           const agentRegistry = panApp.use('agentRegistry');
@@ -107,14 +129,17 @@ function handleWebSocket(ws, req, config) {
                         message: result.error || "authorization failed"
                     }
                 });
+
                 return ws.close(); 
               } 
 
               let new_conn;
               let final_auth_key;
 
+              // --- Resume flow ---
               if (msg.payload.auth_type === 'reconnect' && msg.payload.reconnect?.conn_id && msg.payload.reconnect?.auth_key) { 
                 new_conn = agentRegistry.resumeAgent(msg.payload.reconnect.conn_id, msg.payload.reconnect.auth_key); 
+
                 if (new_conn) { 
                   new_conn.reconnect(ws); 
 
@@ -132,19 +157,21 @@ function handleWebSocket(ws, req, config) {
                             message: 'Invalid resume credentials' 
                         }
                     }, msg);
+
                     return ws.close();
                 } 
-              } else { 
+              } 
+              // --- New session flow ---
+              else { 
                 const agentName = result.info?.agent_name || msg.payload.agent_name || 'unknown';
                 new_conn = createPanConnection(ws, 'agent', agentName);
-
                 final_auth_key = agentRegistry.registerAgent(new_conn);
               } 
 
               ws.conn = new_conn; 
               ws.conn_id = new_conn.id; 
-              log.info(`[agentServer] Agent connected: conn_id=${new_conn.id} auth_type=${msg.payload.auth_type || 'standard'}`);
 
+              log.info(`[agentServer] Agent connected: conn_id=${new_conn.id} auth_type=${msg.payload.auth_type || 'standard'}`);
 
               return new_conn.sendControl({ 
                 msg_type: 'auth.ok', 
@@ -157,10 +184,10 @@ function handleWebSocket(ws, req, config) {
               }, msg); 
           });
 
-
           return;
         }
 
+        // Reject if not authenticated
         return rawSendControl(ws, {
           msg_type: 'auth.failed',
           payload: {
@@ -169,29 +196,31 @@ function handleWebSocket(ws, req, config) {
         }, msg);
       }
 
+      // --- At this point, the agent is authenticated ---
       const conn = ws.conn;
 
       if (conn.type === 'agent') {
-
         const agentRouter = panApp.use('agentRouter');
-        // force from node id and conn id
+
+        // Verify sender identity
         if (msg.from.conn_id != conn.id) {
             log.error(`Agent ${ws.conn.id} tried to send with a different conn_id, closing connection`);
             ws.close();
             return;
         }
+
         if (msg.from.node_id != nodeId) {
             log.error(`Agent ${ws.conn.id} tried to send with a different node_id, closing connection`);
             ws.close();
             return;
         }
 
-        // nail down our from.
+        // Rewrite msg.from to be authoritative
         msg.from = {
             node_id: nodeId,
             conn_id: conn.id
         };
-        //log.error(JSON.stringify(msg.from));
+
         await agentRouter.handleMessage(conn, msg);
       } else if (conn.type === 'node') {
         await handleNodeMessage(conn, msg);
@@ -199,14 +228,20 @@ function handleWebSocket(ws, req, config) {
 
     } catch (err) {
       log.error(err);
-      rawSendError(ws, { type: 'message_failure', message: "Message could not be processed"});
+
+      rawSendError(ws, { type: 'message_failure', message: "Message could not be processed" });
+
       ws.close();
     }
   });
 
+  /**
+   * Handles socket close: gives agent a 2 minute window to reconnect.
+   */
   ws.on('close', () => {
     if (ws.conn?.type === 'agent') {
       const agentRegistry = panApp.use('agentRegistry');
+
       if (!agentRegistry.getAgent(ws.conn.id)) return;
 
       log.warn(`Agent ${ws.conn.id} disconnected without cleanup - starting resume timer`);
@@ -221,6 +256,10 @@ function handleWebSocket(ws, req, config) {
   });
 }
 
+/**
+ * Starts the agent WebSocket + HTTP server.
+ * Returns a control interface with shutdown and getStatus.
+ */
 async function initialize(config = {}) {
   const httpServer = createServer();
   const wss = new WebSocket.Server({ server: httpServer });
@@ -268,4 +307,3 @@ async function initialize(config = {}) {
 }
 
 module.exports = { initialize };
-

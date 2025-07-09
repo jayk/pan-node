@@ -1,4 +1,14 @@
-// node/peer/peerServer.js
+/**
+ * peerServer.js
+ *
+ * Sets up a WebSocket server to handle incoming PAN peer and agent connections.
+ *
+ * - Accepts connections from other PAN nodes ("peers") and special agents.
+ * - Performs an initial handshake via JSON messages with required fields.
+ * - Verifies JWTs using a shared secret (for peers) or placeholder (for agents).
+ * - Delegates connections to PeerConnection or AgentConnection handlers.
+ * - Exposes session nonce, status, and shutdown capabilities.
+ */
 
 const WebSocket = require('ws');
 const jwt = require('jsonwebtoken');
@@ -7,6 +17,7 @@ const { AgentConnection } = require('./agentConnection');
 const { log } = require('../utils/log');
 const panApp = require('../panApp');
 const uuid = require('uuid');
+
 const {
     isValidBaseFields,
     validatePeerMessage,
@@ -16,17 +27,30 @@ const {
 const DEFAULT_PEER_PORT = 5874;
 
 let wss = null;
+
 let portInUse = null;
+
 let sessionNonce = uuid.v4();
 
+/**
+ * Returns the current session nonce, used to differentiate node restarts.
+ */
 function getSessionNonce() {
     return sessionNonce;
 }
 
+/**
+ * Regenerates the session nonce.
+ */
 function regenerateSessionNonce() {
     sessionNonce = uuid.v4();
 }
 
+/**
+ * Handles a single WebSocket connection, routing it to either a peer or agent handler.
+ *
+ * @param {WebSocket} ws - The incoming WebSocket connection.
+ */
 function handleConnection(ws) {
     const peerRegistry = panApp.use('peerRegistry');
     const agentRegistry = panApp.use('agentRegistry');
@@ -36,6 +60,7 @@ function handleConnection(ws) {
 
     ws.once('message', (data) => {
         let msg;
+
         try {
             msg = JSON.parse(data.toString());
         } catch (err) {
@@ -50,6 +75,7 @@ function handleConnection(ws) {
             return;
         }
 
+        // Handle PEER handshake
         if (msg.type === 'peer_control' && msg.msg_type === 'hello') {
             if (!validatePeerMessage(msg)) {
                 log.warn('[peer] Invalid peer handshake message');
@@ -58,6 +84,7 @@ function handleConnection(ws) {
             }
 
             const { node_id, jwt: nodeJwt } = msg.payload || {};
+
             if (!node_id || !nodeJwt) {
                 log.warn('[peer] Missing node_id or jwt in peer handshake');
                 ws.close();
@@ -65,6 +92,7 @@ function handleConnection(ws) {
             }
 
             const secret = peerRegistry.getSecretForNode(node_id);
+
             if (!secret) {
                 log.warn(`[peer] No shared secret for node ${node_id}`);
                 ws.close();
@@ -80,10 +108,15 @@ function handleConnection(ws) {
             }
 
             const peerRouter = panApp.use('peerRouter');
+
             const peer = new PeerConnection(ws, node_id, peerRouter);
+
             peerRegistry.registerPeer(node_id, peer);
+
             log.info(`[peer] Registered peer node: ${node_id}`);
-        } 
+        }
+
+        // Handle SPECIAL AGENT handshake
         else if (msg.type === 'agent_control' && msg.msg_type === 'hello') {
             if (!validateAgentMessage(msg, peerStatus.getNodeId())) {
                 log.warn('[peer] Invalid agent handshake message');
@@ -92,6 +125,7 @@ function handleConnection(ws) {
             }
 
             const { agentType, capabilities, jwt: agentJwt } = msg.payload || {};
+
             if (!agentType || !Array.isArray(capabilities) || !agentJwt) {
                 log.warn('[peer] Invalid special agent handshake payload');
                 ws.close();
@@ -99,7 +133,7 @@ function handleConnection(ws) {
             }
 
             try {
-                // NOTE: Replace 'dummy-secret-for-now' later
+                // NOTE: This is a placeholder and must be replaced with proper auth
                 jwt.verify(agentJwt, 'dummy-secret-for-now', { audience: 'pan-agent' });
             } catch (err) {
                 log.warn(`[peer] Invalid JWT for agent ${agentType}: ${err.message}`);
@@ -108,13 +142,17 @@ function handleConnection(ws) {
             }
 
             const agentId = ws._socket.remoteAddress + ':' + ws._socket.remotePort;
+
             const agentConn = new AgentConnection(ws, agentId, agentType, capabilities);
 
             agentRegistry.registerAgent(agentId, agentConn);
+
             log.info(`[peer] Registered special agent: ${agentType} (${agentId})`);
 
             agentConn.sendWelcome(peerStatus.getNodeId(), getSessionNonce());
-        } 
+        }
+
+        // Unknown or unexpected message type
         else {
             log.warn('[peer] Unexpected message type during handshake:', msg.type, msg.msg_type);
             ws.close();
@@ -123,6 +161,12 @@ function handleConnection(ws) {
     });
 }
 
+/**
+ * Initializes the peer WebSocket server.
+ *
+ * @param {object} config - Optional configuration object (e.g. custom port).
+ * @returns {Promise<object>} - API functions for shutdown, status, and session nonce.
+ */
 async function initialize(config = {}) {
     const port = config.port || DEFAULT_PEER_PORT;
 
@@ -164,6 +208,9 @@ async function initialize(config = {}) {
     });
 }
 
+/**
+ * Gracefully shuts down the peer WebSocket server.
+ */
 async function shutdown() {
     if (!wss) {
         log.warn('[peer] Peer server not running.');
@@ -171,6 +218,7 @@ async function shutdown() {
     }
 
     log.info('[peer] Shutting down peer WebSocket server...');
+
     return new Promise((resolve, reject) => {
         wss.close((err) => {
             if (err) {
@@ -183,8 +231,14 @@ async function shutdown() {
     });
 }
 
+/**
+ * Returns the current status of the peer server, including port and peer count.
+ *
+ * @returns {object}
+ */
 function getStatus() {
     const peerRegistry = panApp.use('peerRegistry');
+
     return {
         port: portInUse,
         connectedPeers: peerRegistry.getPeerCount?.() || 0,
