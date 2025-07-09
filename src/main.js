@@ -1,5 +1,15 @@
-// main.js
-
+/**
+ * main.js
+ *
+ * Entry point and lifecycle manager for a PAN Node instance.
+ *
+ * This module loads the configuration, initializes all subsystems (peer server,
+ * agent server, routers, registries, auth managers, etc.), and provides start
+ * and stop functions for the node.
+ *
+ * If run directly from the command line, it starts the node using the config file.
+ * Also handles graceful shutdown on SIGTERM.
+ */
 const fs = require('fs');
 const path = require('path');
 const JSON5 = require('json5');
@@ -19,22 +29,32 @@ const agentAuthManager = require('./node/agentAuthManager');
 
 let nodeStarted = false;
 
-// Load config from file if needed
+// Load config from disk using JSON5 (allows comments and trailing commas)
+/**
+ * Reads and parses the configuration file from disk.
+ * Returns the config object or exits the process if parsing fails.
+ */
 function loadConfigFromDisk() {
   const configFile = process.env.PAN_CONFIG || 'config.json5';
   const configPath = path.resolve(__dirname, configFile);
 
   try {
-    const raw = fs.readFileSync(configPath, 'utf-8');
-    const parsed = JSON5.parse(raw);
+    const raw = fs.readFileSync(configPath, 'utf-8'); // Read file as UTF-8 text
+    const parsed = JSON5.parse(raw); // Parse JSON5 into JS object
     log.info(`✅ Loaded config from ${configPath}`);
     return parsed;
   } catch (err) {
     log.error(`❌ Failed to read config file at ${configPath}:`, err);
-    process.exit(1);
+    process.exit(1); // Exit if reading/parsing fails
   }
 }
 
+/**
+ * Starts the PAN node. Loads config, initializes all subsystems,
+ * and sets up global PAN object.
+ * 
+ * @param {Object|null} providedConfig - Optionally override config from file.
+ */
 async function startNode(providedConfig = null) {
   if (nodeStarted) {
     log.warn('⚠️ PAN Node already started.');
@@ -45,8 +65,9 @@ async function startNode(providedConfig = null) {
 
   log.info('🧠 Starting PAN Node...');
 
-  initializeLogger(config.logging);
+  initializeLogger(config.logging); // Initialize logging with config settings
 
+  // Initialize each subsystem with its respective config section
   log.info('🔧 Initializing peer registry...');
   panApp.setSubsystem('peerRegistry', await peerRegistry.initialize(config.peer_registry || {}));
 
@@ -72,19 +93,22 @@ async function startNode(providedConfig = null) {
   log.info('🔧 Initializing group manager...');
   panApp.setSubsystem('groupManager', await groupManager.initialize(config.group_manager));
 
-
   log.info('🌐 Initializing agent server...');
   panApp.setSubsystem('agentServer', await agentServer.initialize(config.agent_server));
   log.info('✅ Agent server ready');
 
   nodeStarted = true;
 
+  // Make PAN globally available
   global.PAN = panApp;
 
   log.info('⭕ PAN Node fully online');
   return panApp;
 }
 
+/**
+ * Stops the PAN node and shuts down subsystems cleanly.
+ */
 async function stopNode() {
   if (!nodeStarted) {
     log.warn('⚠️ PAN Node not running.');
@@ -95,6 +119,7 @@ async function stopNode() {
 
   const shutdowns = [];
 
+  // List of subsystems that support shutdown
   const subsystems = [
     'peerServer',
     'agentServer',
@@ -104,6 +129,7 @@ async function stopNode() {
     'agentRegistry'
   ];
 
+  // Call shutdown on each subsystem that provides it
   for (const name of subsystems) {
     const sub = panApp.use(name);
     if (sub && typeof sub.shutdown === 'function') {
@@ -114,20 +140,20 @@ async function stopNode() {
     }
   }
 
-  await Promise.all(shutdowns);
+  await Promise.all(shutdowns); // Wait for all shutdowns to complete
 
   nodeStarted = false;
   log.info('⛔ PAN Node stopped.');
 }
 
-// If this script is being run directly, start the node with config file
+// If this file is run directly (not imported as module), start the node
 if (require.main === module) {
   process.on('SIGTERM', function() {
     log.warn('⚠️  PAN Node shutting down...');
-    stopNode().then( () => {
-        log.info('❌ PAN Node shutdown complete');
-    }).catch( e => {
-        log.info('❌❌ PAN Node shutdown failed:', e);
+    stopNode().then(() => {
+      log.info('❌ PAN Node shutdown complete');
+    }).catch(e => {
+      log.info('❌❌ PAN Node shutdown failed:', e);
     });
   });
 
@@ -137,7 +163,7 @@ if (require.main === module) {
   });
 }
 
-// Expose functions for testing or external control
+// Expose control functions for testing or external use
 module.exports = {
   startNode,
   stopNode
