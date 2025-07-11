@@ -3,7 +3,7 @@
  *
  * Manages authentication requests for agents connecting to the network.
  *
- * Supports pluggable authentication methods (e.g. local secret, special-agent relay),
+ * Supports pluggable authentication methods (e.g. local, special-agent relay),
  * with retries, timeouts, and per-request callback handling.
  *
  * In the future, all auth requests will be relayed to a special agent and
@@ -13,6 +13,7 @@
 const uuid = require('uuid');
 const jwt = require('jsonwebtoken');
 const { log } = require('../utils/log');
+const { getTrustValidator } = require('./vouchsafeTrust');
 // import { relayAuthToAgent } from './relayAgent.js'; // Future: enable dynamic dispatch to an auth agent
 
 const pendingAuthRequests = new Map(); // auth_request_id → { callback, tries }
@@ -21,11 +22,16 @@ let config = {
     order: ['local'],
     max_tries: 2,
     timeout_ms: 3000,
-    local: {
-        type: 'local',
-        secret: 'default-secret'
+    methods: {
+        local: {
+            type: 'local',
+            allow_untrusted_agents: true,
+            trusted_agents_config_file: "trusted_agents.json"
+        }
     }
 };
+
+let methods = {};
 
 /**
  * Initializes the agentAuthManager with configuration.
@@ -38,6 +44,8 @@ function initialize(userConfig = {}) {
         ...config,
         ...userConfig
     };
+    // load the local trust validator on initialize
+    methods.local = getTrustValidator('local', { path: config.methods.local.trusted_agents_config_file });
 
     log.info('[agentAuthManager] Initialized with methods:', config.order.join(' → '));
 
@@ -84,7 +92,7 @@ async function attemptAuth(authRequestId, authPayload) {
 
     pending.tries++;
 
-    const methodConfig = config[methodName];
+    const methodConfig = config.methods[methodName];
 
     if (!methodConfig || !methodConfig.type) {
         throw new Error(`Invalid auth method config for '${methodName}'`);
@@ -96,9 +104,7 @@ async function attemptAuth(authRequestId, authPayload) {
         switch (methodConfig.type) {
             case 'local':
                 // Future: remove this path entirely when relay+vouchsafe is standard
-                console.log('FOOOOOOOOOO');
                 authPromise = performLocalAuth(authPayload, methodConfig);
-                console.log('BARRRRRR');
                 break;
 
             case 'special-agent':
@@ -116,18 +122,19 @@ async function attemptAuth(authRequestId, authPayload) {
 
         const result = await Promise.race([authPromise, timeoutPromise]);
 
-        console.log('BATTTTT');
-
         finishAuthRequest(authRequestId, result);
     } catch (err) {
-        console.log(err);
+        log.error(err);
 
         log.warn(`[agentAuthManager] Auth method '${methodName}' failed:`, err.message || err);
 
         if (pending.tries < config.max_tries) {
             attemptAuth(authRequestId, authPayload);
         } else {
-            finishAuthRequest(authRequestId, { success: false, error: err.message || err });
+            finishAuthRequest(authRequestId, {
+                success: false,
+                error: err.message || err
+            });
         }
     }
 }
@@ -181,29 +188,66 @@ async function performLocalAuth(authPayload, methodConfig) {
         };
     }
 
+    // step one, validate the token.
+    
     let decoded;
 
     try {
-        decoded = jwt.verify(authPayload.token, methodConfig.secret);
+        decoded = await methods.local.validateToken(authPayload.token);
+//        log.warn('MMMMMMMMMMMMMMMMm', decoded);
     } catch (err) {
+        log.warn('Local auth failed, token error: ', err);
         return {
             success: false,
-            error: 'Invalid or expired token'
+            error: 'Access Denied'
         };
     }
 
-    if (typeof decoded.identifier !== 'string' || decoded.identifier.length < 3) {
+//    log.warn("XXXXX", methodConfig);
+    if (methodConfig.allow_untrusted_agents) {
         return {
-            success: false,
-            error: 'Token missing valid identifier'
+            success: true,
+            info: {
+                agent_name: decoded.identifier || decoded.iss,
+                vouchsafe_id: decoded.iss
+            },
+            token: decoded
         };
-    }
-
-    return {
-        success: true,
-        info: {
-            agent_name: decoded.identifier
+    };
+    
+//    log.warn("YYYYY Attempting trust test", decoded);
+    let trustResult;
+    // If we are here, the token validated, but we don't know if we trust it.
+    try {
+        trustResult = await methods.local.isTokenTrusted(authPayload.token, authPayload.tokens, ['agent-connect']);
+        if (trustResult.trusted) {
+            return {
+                success: true,
+                info: {
+                    agent_name: trustResult.decoded.identifier || trustResult.decoded.iss,
+                    vouchsafe_id: trustResult.decoded.iss
+                },
+                token: trustResult.decoded
+            };
+        } else {
+            log.warn('Local auth failed, issuer not trusted for agent-connect. ');
+            return {
+                success: false,
+                error: 'Access Denied'
+            };
         }
+    } catch (err) {
+        log.warn('Local auth failed, trust check error: ', err);
+        return {
+            success: false,
+            error: 'Access Denied'
+        };
+    }
+
+    // we shouldn't be able to get here... but just in case.
+    return {
+        success: false,
+        error: 'Access Denied'
     };
 }
 

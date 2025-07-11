@@ -38,7 +38,10 @@ function isFastUuid(str) {
 }
 
 // --- Universal basic field validation ---
+// This is meant to do a basic validation on a packet and fail
+// as quickly as possible with as little overhead as possible.
 function isValidBaseFields(msg, { isAgent = false } = {}) {
+    //log.verbose = log.warn;
     FORCE_DEBUGGING && log.verbose('msg check');
     if (typeof msg !== 'object' || msg === null) return false;
     FORCE_DEBUGGING && log.verbose('msg_id check');

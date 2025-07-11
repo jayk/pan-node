@@ -13,8 +13,6 @@
 function initialize(config = {}) {
     const peers = new Map();
 
-    const nodeSecrets = new Map();   // node_id → shared secret (temporary; will move to Vouchsafe)
-
     /**
      * Registers a peer connection under the given nodeId.
      *
@@ -25,14 +23,8 @@ function initialize(config = {}) {
         peers.set(nodeId, peerConnection);
     }
 
-    /**
-     * Returns the shared secret for a given node ID.
-     *
-     * @param {string} nodeId - Node ID to retrieve the secret for.
-     * @returns {string|undefined}
-     */
-    function getSecretForNode(nodeId) {
-        return nodeSecrets.get(nodeId);
+    function getPeer(nodeId) {
+        return peers.get(nodeId);
     }
 
     /**
@@ -56,7 +48,7 @@ function initialize(config = {}) {
 
     return {
         registerPeer,
-        getSecretForNode,
+        getPeer,
         getPeerCount,
         shutdown
     };

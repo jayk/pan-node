@@ -17,6 +17,8 @@ const { AgentConnection } = require('./agentConnection');
 const { log } = require('../utils/log');
 const panApp = require('../panApp');
 const uuid = require('uuid');
+const { getTrustValidator } = require('../node/vouchsafeTrust');
+const { rawSendControl, rawSendError } = require('../agent/panConnection');
 
 const {
     isValidBaseFields,
@@ -31,6 +33,8 @@ let wss = null;
 let portInUse = null;
 
 let sessionNonce = uuid.v4();
+
+let peerTrustValidator;
 
 /**
  * Returns the current session nonce, used to differentiate node restarts.
@@ -51,15 +55,17 @@ function regenerateSessionNonce() {
  *
  * @param {WebSocket} ws - The incoming WebSocket connection.
  */
-function handleConnection(ws) {
+async function handleConnection(ws) {
     const peerRegistry = panApp.use('peerRegistry');
     const agentRegistry = panApp.use('agentRegistry');
     const peerStatus = panApp.use('peerStatus');
 
     log.info('[peer] Incoming connection...');
 
-    ws.once('message', (data) => {
+    ws.once('message', async (data) => {
         let msg;
+
+        let decoded;
 
         try {
             msg = JSON.parse(data.toString());
@@ -83,37 +89,96 @@ function handleConnection(ws) {
                 return;
             }
 
-            const { node_id, jwt: nodeJwt } = msg.payload || {};
+            const authPayload = msg.payload || {};
 
-            if (!node_id || !nodeJwt) {
-                log.warn('[peer] Missing node_id or jwt in peer handshake');
-                ws.close();
-                return;
-            }
-
-            const secret = peerRegistry.getSecretForNode(node_id);
-
-            if (!secret) {
-                log.warn(`[peer] No shared secret for node ${node_id}`);
+            if (!authPayload.token) {
+                log.warn('[peer] Missing token in peer handshake');
                 ws.close();
                 return;
             }
 
             try {
-                jwt.verify(nodeJwt, secret, { audience: 'pan-peer' });
+                decoded = await peerTrustValidator.validateToken(authPayload.token);
+
+                if (!decoded.node_id) {
+                    log.warn('[peer] Missing node_id in peer token');
+                    ws.close();
+                    return;
+                }
+
+                log.warn('MMMMMMMMMMMMMMMMm', decoded);
             } catch (err) {
-                log.warn(`[peer] Invalid JWT for peer node ${node_id}: ${err.message}`);
+                log.warn('Peer auth failed, token error: ', err);
+
+                rawSendError(ws, {
+                    msg_type: 'auth.failed',
+                    payload: {
+                        message: 'Access Denied'
+                    }
+                });
                 ws.close();
                 return;
             }
+            // now we verify if we trust this node.
+            
+            let trustResult;
+            try {
+                trustResult = await peerTrustValidator.isTokenTrusted(authPayload.token, authPayload.tokens, ['peer-connect']);
+                if (trustResult.trusted) {
+                    // allow the peer to connect.
+                    const peerRouter = panApp.use('peerRouter');
+                    let peer_connect_token = trustResult.decoded;
 
-            const peerRouter = panApp.use('peerRouter');
+                    let existingPeer = peerRegistry.getPeer(peer_connect_token.node_id);
 
-            const peer = new PeerConnection(ws, node_id, peerRouter);
+                    // if we have an existing peer for that node id, and it's not owned by the same vouchsafe_id
+                    // then something is hinky and we need to fail.
+                    if (existingPeer && existingPeer.details.vouchsafe_id != peer_connect_token.iss) {
+                        // a peer with this node id exists already, and is not
+                        // owned by the same issuer. So we fail and disconnect.
+                        throw new Error('newly connected peer ' + peer_connect_token.iss + 
+                                        ' tried to claim an active node_id: ' + peer_connect_token.node_id);
+                    }
+                    // TODO: We probably need a more in-depth check against node_ids that might already
+                    // be present in the network. For now, though, this is good enough.
+                    
+                    // if we are here, we have a valid connect request
+                    let details = {
+                        connect_token: peer_connect_token,
+                        peer_name: trustResult.decoded.identifier || trustResult.decoded.iss,
+                        vouchsafe_id: trustResult.decoded.iss,
+                    }
 
-            peerRegistry.registerPeer(node_id, peer);
+                    const peer = new PeerConnection(ws, authPayload.node_id, peerRouter, details);
+                    peerRegistry.registerPeer(authPayload.node_id, peer);
 
-            log.info(`[peer] Registered peer node: ${node_id}`);
+                    log.info(`[peer] Registered peer node: ${node_id}`);
+
+                    // TODO: should send a greeting packet of some kind and trigger routing exchange
+                    
+                    return;
+                } else {
+                    log.warn('Peer auth failed, issuer not trusted for peer-connect. ');
+                    rawSendError(ws, {
+                        msg_type: 'auth.failed',
+                        payload: {
+                            message: 'Access Denied'
+                        }
+                    });
+                    ws.close();
+                    return;
+                }
+            } catch (err) {
+                log.warn('Peer auth failed, trust check error: ', err);
+                rawSendError(ws, {
+                    msg_type: 'auth.failed',
+                    payload: {
+                        message: 'Access Denied'
+                    }
+                });
+                ws.close();
+                return;
+            }
         }
 
         // Handle SPECIAL AGENT handshake
@@ -169,6 +234,11 @@ function handleConnection(ws) {
  */
 async function initialize(config = {}) {
     const port = config.port || DEFAULT_PEER_PORT;
+
+    if (typeof config.trusted_peers_config_file != 'string') {
+        throw new Error('No trusted_peers_config_file provided. Unable to continue');
+    }
+    peerTrustValidator = getTrustValidator('peer', { path: config.trusted_peers_config_file });
 
     return new Promise((resolve, reject) => {
         if (wss) {

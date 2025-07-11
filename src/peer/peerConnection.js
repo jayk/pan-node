@@ -2,10 +2,11 @@ const { validateIncomingPeerMessage } = require('../utils/validators');
 const { log } = require('../utils/log');
 
 class PeerConnection {
-    constructor(ws, nodeId, router) {
+    constructor(ws, nodeId, router, details) {
         this.ws = ws;
         this.nodeId = nodeId;
         this.router = router;
+        this.details = details;
 
         ws.on('message', this._onMessage.bind(this));
         ws.on('close', () => {

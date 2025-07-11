@@ -81,11 +81,11 @@ function handleWebSocket(ws, req, config) {
     try {
       const now = Date.now();
       const msg = JSON.parse(msgBuffer.toString());
-      log.verbose('msg: ', msg);
+      //log.warn('inbound-msg: ', msg);
 
       // --- Message validation ---
       if (!validateIncomingAgentMessage(msg)) {
-        log.verbose(`Agent ${ws.conn_id} sent a bad packet: `, msg);
+        log.warn(`Agent ${ws.conn_id} sent a bad packet: `, msg);
         ws.msg_errors++;
         ws.lastErrorTimestamp = now;
 
