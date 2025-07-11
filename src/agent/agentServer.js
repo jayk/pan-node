@@ -22,6 +22,8 @@ const MAX_MESSAGE_BYTES = 61440; // 60KB safe limit for JSON messages
 const cleanupTimeouts = new Map();
 const { validateIncomingAgentMessage } = require('../utils/validators');
 const spamProtector = require('../utils/spamProtector');
+const ACTIVE_SOCKETS = {};
+const PENDING_SOCKETS = {};
 
 /**
  * Handles an individual WebSocket connection from an agent.
@@ -35,9 +37,16 @@ function handleWebSocket(ws, req, config) {
   const SPAM_ERROR_RESET_WINDOW = spamConfig.error_reset_window * 1000 ?? 300000;
   const MAX_ERRORS_BEFORE_DISCONNECT = spamConfig.disconnect_threshold ?? 5;
 
-  ws.lastErrorTimestamp = Date.now();
+  let now = Date.now();
+  ws.socket_id = uuid.v4();
+  // add this socket to our active socket list
+  PENDING_SOCKETS[ws.socket_id] = ws;
+
+  ws.lastErrorTimestamp = now;
+  ws.connectTimestamp = now;
   ws.msg_errors = 0;
   ws.conn_id = 'unknown';
+
 
   /**
    * Handles all incoming messages from the socket.
@@ -171,6 +180,11 @@ function handleWebSocket(ws, req, config) {
               ws.conn = new_conn; 
               ws.conn_id = new_conn.id; 
 
+              // remove this socket from the pending sockets because we have authenticated.
+              // move it to active sockets;
+              delete PENDING_SOCKETS[ws.socket_id];
+              ACTIVE_SOCKETS[ws.socket_id] = ws;
+
               log.info(`[agentServer] Agent connected: conn_id=${new_conn.id} auth_type=${msg.payload.auth_type || 'standard'}`);
 
               return new_conn.sendControl({ 
@@ -252,9 +266,32 @@ function handleWebSocket(ws, req, config) {
       }, 2 * 60 * 1000);
 
       cleanupTimeouts.set(ws.conn.id, countdown_timeout);
+      delete PENDING_SOCKETS[ws.socket_id];
+      delete ACTIVE_SOCKETS[ws.socket_id];
     }
   });
 }
+
+// performServerMaintenance runs once per second, to do agent server maintenance.
+async function performServerMaintenance(config) {
+
+    let now = Date.now();
+    log.debug('Performing Server Maintenance at ' + Math.floor(now/1000));
+
+    let CONNECT_TIMEOUT = config.connect_timeout || 3;
+    // first let's clean up any connections that haven't completed
+    // the connection in the required amount of time.
+    const TOO_OLD_CONNECT_TIME = now - (CONNECT_TIMEOUT * 1000);
+    Object.keys(PENDING_SOCKETS).forEach( (socket_id) => {
+        let ws = PENDING_SOCKETS[socket_id];
+        if (ws.connectTimestamp < TOO_OLD_CONNECT_TIME) {
+            log.error('Closing socket ' + socket_id + ': connect timeout.'); 
+            ws.close();
+            delete PENDING_SOCKETS[socket_id];
+        }
+    });    
+}
+
 
 /**
  * Starts the agent WebSocket + HTTP server.
@@ -264,6 +301,7 @@ async function initialize(config = {}) {
   const httpServer = createServer();
   const wss = new WebSocket.Server({ server: httpServer });
   const port = config.port || DEFAULT_AGENT_PORT;
+  let maintenanceInterval;
 
   wss.on('connection', (ws, req) => {
     log.info('Incoming WebSocket connection');
@@ -274,9 +312,14 @@ async function initialize(config = {}) {
     log.info(`[agent] PAN node listening for agents on ws://localhost:${port}`);
   });
 
+  maintenanceInterval = setInterval(() => { 
+    performServerMaintenance(config);
+  }, 1000);
+
   return {
     shutdown: async () => {
       log.info('[agent] Shutting down agent WebSocket server...');
+      clearInterval(maintenanceInterval);
       return new Promise((resolve, reject) => {
         wss.close((err) => {
           if (err) {
