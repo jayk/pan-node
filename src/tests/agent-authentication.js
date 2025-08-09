@@ -19,7 +19,6 @@ describe('Vouchsafe Agent Authentication', function () {
     let alice, bob;
     let trustedFilePath = path.join(__dirname, 'trusted_issuers.json');
     let trustedPeerFilePath = path.join(__dirname, 'trusted_peer_issuers.json');
-    let ws;
 
     before(async function () {
         // Create identities
@@ -66,16 +65,19 @@ describe('Vouchsafe Agent Authentication', function () {
     });
 
     after(async function () {
-        if (ws && ws.readyState === WebSocket.OPEN) {
+/*        if (ws && ws.readyState === WebSocket.OPEN) {
             ws.close();
         }
+*/
         await stopNode();
-        //fs.unlinkSync(trustedFilePath);
+        fs.unlinkSync(trustedFilePath);
+        fs.unlinkSync(trustedPeerFilePath);
     });
 
     it('should reject connection with no token', function (done) {
-        ws = new WebSocket(`ws://localhost:${TEST_AGENT_PORT}`);
+        let ws = new WebSocket(`ws://localhost:${TEST_AGENT_PORT}`);
         ws.on('open', () => {
+            setTimeout( () => {
             ws.send(JSON.stringify({
                 type: 'control',
                 msg_type: 'auth',
@@ -86,6 +88,7 @@ describe('Vouchsafe Agent Authentication', function () {
                     // no token
                 }
             }));
+            }, 5000);
         });
 
         ws.once('message', (data) => {
@@ -96,11 +99,14 @@ describe('Vouchsafe Agent Authentication', function () {
             done();
         });
 
-        ws.on('error', done);
+        ws.on('error', (data) => {
+            ws.close();
+            done();
+        });
     });
 
     it('should reject connection with non-vouchsafe JWT', function (done) {
-        ws = new WebSocket(`ws://localhost:${TEST_AGENT_PORT}`);
+        let ws = new WebSocket(`ws://localhost:${TEST_AGENT_PORT}`);
         const fakeJwt = jwt.sign({ sub: 'unauthorized' }, 'not-vouchsafe');
 
         ws.on('open', () => {
@@ -124,17 +130,20 @@ describe('Vouchsafe Agent Authentication', function () {
             done();
         });
 
-        ws.on('error', done);
+        ws.on('error', (data) => {
+            ws.close();
+            done();
+        });
     });
 
     it('should reject vouchsafe token from untrusted issuer (bob)', async function () {
-        ws = new WebSocket(`ws://localhost:${TEST_AGENT_PORT}`);
         const token = await createAttestation(bob.urn, bob.keypair, {
             purpose: 'agent-connect',
             identifier: 'bob'
         });
 
         await new Promise((resolve, reject) => {
+            ws = new WebSocket(`ws://localhost:${TEST_AGENT_PORT}`);
             ws.on('open', () => {
                 ws.send(JSON.stringify({
                     type: 'control',
@@ -156,18 +165,21 @@ describe('Vouchsafe Agent Authentication', function () {
                 resolve();
             });
 
-            ws.on('error', reject);
+            ws.on('error', (data) => {
+                ws.close();
+                reject()
+            });
         });
     });
 
     it('should accept vouchsafe token from trusted issuer (alice)', async function () {
-        ws = new WebSocket(`ws://localhost:${TEST_AGENT_PORT}`);
         const token = await createAttestation(alice.urn, alice.keypair, {
             purpose: 'agent-connect',
             identifier: 'alice'
         });
 
         await new Promise((resolve, reject) => {
+            ws = new WebSocket(`ws://localhost:${TEST_AGENT_PORT}`);
             ws.on('open', () => {
                 ws.send(JSON.stringify({
                     type: 'control',
@@ -190,7 +202,10 @@ describe('Vouchsafe Agent Authentication', function () {
                 resolve();
             });
 
-            ws.on('error', reject);
+            ws.on('error', (data) => {
+                ws.close();
+                reject()
+            });
         });
     });
 });

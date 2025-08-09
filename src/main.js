@@ -85,7 +85,7 @@ async function startNode(providedConfig = null) {
   log.info('✅ Peer server ready');
 
   log.info('🔒  Initializing agent auth manager...');
-  panApp.setSubsystem('agentAuthManager', agentAuthManager.initialize(config.agent_auth_manager || {}));
+  panApp.setSubsystem('agentAuthManager', await agentAuthManager.initialize(config.agent_auth_manager || {}));
 
   log.info('⚙  Initializing agent router...');
   panApp.setSubsystem('agentRouter', await agentRouter.initialize(config.agent_router || {}));
@@ -126,11 +126,12 @@ async function stopNode() {
     'peerRouter',
     'agentRouter',
     'groupManager',
-    'agentRegistry'
+    'agentRegistry',
+    'agentAuthManager',
   ];
 
   // Call shutdown on each subsystem that provides it
-  for (const name of subsystems) {
+  subsystems.forEach((name) => {
     const sub = panApp.use(name);
     if (sub && typeof sub.shutdown === 'function') {
       log.info(`🚦 Stopping ${name}...`);
@@ -138,7 +139,7 @@ async function stopNode() {
         log.error(`❌ Error shutting down ${name}:`, err);
       }));
     }
-  }
+  });
 
   await Promise.all(shutdowns); // Wait for all shutdowns to complete
 

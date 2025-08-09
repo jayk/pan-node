@@ -39,7 +39,7 @@ let methods = {};
  * @param {object} userConfig - Optional override for default settings.
  * @returns {object} API for submitting authentication requests.
  */
-function initialize(userConfig = {}) {
+async function initialize(userConfig = {}) {
     config = {
         ...config,
         ...userConfig
@@ -50,8 +50,17 @@ function initialize(userConfig = {}) {
     log.info('[agentAuthManager] Initialized with methods:', config.order.join(' → '));
 
     return {
+        shutdown,
         submitAuthRequest
     };
+}
+
+async function shutdown() {
+    log.info('[agentAuthManager] Shutting Down')
+    // clean up connect timeouts on shutdown
+    Object.keys(pendingConnectTimeouts).forEach((timeout) => {
+        clearTimeout(timeout);
+    });
 }
 
 /**
@@ -80,6 +89,7 @@ function submitAuthRequest(authPayload, callback) {
  * @param {object} authPayload
  */
 async function attemptAuth(authRequestId, authPayload) {
+    console.warn("Starting Auth:", authRequestId)
     const pending = pendingAuthRequests.get(authRequestId);
     if (!pending) return;
 
@@ -103,12 +113,10 @@ async function attemptAuth(authRequestId, authPayload) {
 
         switch (methodConfig.type) {
             case 'local':
-                // Future: remove this path entirely when relay+vouchsafe is standard
                 authPromise = performLocalAuth(authPayload, methodConfig);
                 break;
 
             case 'special-agent':
-                // Future: replace with full Vouchsafe token validation via external agent
                 authPromise = relayAuthToAgent(authRequestId, authPayload, methodConfig);
                 break;
 
@@ -117,7 +125,12 @@ async function attemptAuth(authRequestId, authPayload) {
         }
 
         const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('Auth timeout')), config.timeout_ms);
+            let connect_timeout = setTimeout(() => {
+                delete pendingConnectTimeouts[connect_timeout];
+                console.log('connect timeout', connect_timeout);
+                reject(new Error('Auth timeout'))
+            }, config.timeout_ms);
+            pendingConnectTimeouts[connect_timeout] = connect_timeout;
         });
 
         const result = await Promise.race([authPromise, timeoutPromise]);
@@ -146,6 +159,7 @@ async function attemptAuth(authRequestId, authPayload) {
  * @param {object} result - Auth result (e.g., success, error, agent info)
  */
 function finishAuthRequest(authRequestId, result) {
+    console.warn("Finishing Auth:", authRequestId);
     const pending = pendingAuthRequests.get(authRequestId);
     if (!pending) return;
 
@@ -269,6 +283,7 @@ async function relayAuthToAgent(authRequestId, authPayload, methodConfig) {
 
 module.exports = { 
     initialize,
+    shutdown,
     submitAuthRequest,
     handleAuthAgentReply
 };
