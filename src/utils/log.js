@@ -74,9 +74,25 @@ function getLogger() {
   return loggerInstance;
 }
 
+function log_scrub(data) {
+    let result;
+    try {
+        if (typeof data == 'undefined' || data === null) {
+            result = 'undefined';
+        } else {
+            result = data.toString().substring(0, 64);
+        }
+    } catch(e) {
+        console.error(e);
+        result = "unprintable-data";
+    }
+    return result;
+}
+
 module.exports = {
   initializeLogger,
   getLogger,
-  log
+  log,
+  log_scrub,
 };
 

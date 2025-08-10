@@ -9,13 +9,16 @@
 
 const { createServer } = require('http');
 const WebSocket = require('ws');
+const fs = require('fs');
+const JSON5 = require('json5');
 const jwt = require('../utils/jwt');
 const uuid = require('uuid');
-const { log } = require('../utils/log');
+const { log, log_scrub } = require('../utils/log');
 const { cleanupAgent } = require('./agentControl');
 const handleNodeMessage = require('../utils/nodeMessages');
 const { createPanConnection, rawSendControl, rawSendError } = require('./panConnection');
 const panApp = require('../panApp');
+const { createAttestation, validateVouchToken } = require('vouchsafe');
 
 const DEFAULT_AGENT_PORT = 5295;
 const MAX_MESSAGE_BYTES = 61440; // 60KB safe limit for JSON messages
@@ -24,6 +27,18 @@ const { validateIncomingAgentMessage } = require('../utils/validators');
 const spamProtector = require('../utils/spamProtector');
 const ACTIVE_SOCKETS = {};
 const PENDING_SOCKETS = {};
+let get_server_identity;
+let set_server_identity = function (identity) {
+    let AGENT_SERVER_IDENTITY = identity;
+    
+    get_server_identity = () => {
+        return AGENT_SERVER_IDENTITY;
+    };
+    set_server_identity = () => {
+      log.error("[agent_server] attempting to redefine server_identity, somebody is doing something they shouldn't.");
+      throw new Error('Resetting agent_server identity blocked');
+    }
+}
 
 /**
  * Handles an individual WebSocket connection from an agent.
@@ -90,7 +105,7 @@ function handleWebSocket(ws, req, config) {
     try {
       const now = Date.now();
       const msg = JSON.parse(msgBuffer.toString());
-      //log.warn('inbound-msg: ', msg);
+      log.warn('inbound-msg: ', msg);
 
       // --- Message validation ---
       if (!validateIncomingAgentMessage(msg)) {
@@ -125,6 +140,39 @@ function handleWebSocket(ws, req, config) {
 
       // --- Handle authentication if not already authed ---
       if (!ws.conn) {
+        if (!ws.helo) {
+            // The first message we have to receive is a helo.
+            // We ignore the body of a helo and just respond with who we
+            // are. This protects agents from attempting to connect to 
+            // malicious or unknown servers.
+            if (msg.type === 'control' && msg.msg_type === 'helo') {
+                // send helo message with agent-server identity
+                log.warn(`Got helo`);
+                let server_identity = get_server_identity();
+                let helo_token = await createAttestation(server_identity.identity.urn, server_identity.identity.keypair, {
+                    ...server_identity.helo_claims,
+                    purpose: 'agent-helo',
+                    server_name: server_identity.server_name,
+                    welcome_message: server_identity.welcome_message,
+                    i_am: server_identity.identity.urn,
+                    exp: Math.floor(Date.now() / 1000) + 60,
+                });
+                rawSendControl(ws, {
+                    msg_type: 'helo',
+                    payload: {
+                        i_am: server_identity.identity.urn,
+                        helo_token: helo_token
+                    }
+                });
+                ws.helo = true;
+                return;
+            } else {
+                // no messages allowed until after helo is sent. Close connection.
+                log.warn(`Agent message received prior to helo. ${log_scrub(msg.type)}.${log_scrub(msg.msg_type)}`);
+                return ws.close(); 
+            }
+        } 
+        // if we are here, we're past helo, so we can accept an auth call.
         if (msg.type === 'control' && msg.msg_type === 'auth') {
           const agentRegistry = panApp.use('agentRegistry');
           const agentAuthManager = panApp.use('agentAuthManager');
@@ -298,10 +346,32 @@ async function performServerMaintenance(config) {
  * Returns a control interface with shutdown and getStatus.
  */
 async function initialize(config = {}) {
+
+  console.warn(JSON.stringify(config));
+  log.info(`agent server config is: `+ JSON.stringify(config));
+  try {
+      const raw = fs.readFileSync(config.identity.identity_file, 'utf-8'); // Read file as UTF-8 text
+      let agentServerIdentity = JSON5.parse(raw); // Parse JSON5 into JS object
+      let identity = {
+        ...config.identity,
+        identity: {
+            ...agentServerIdentity
+        }
+      };
+      delete identity.identity_file;
+      set_server_identity(identity);
+      agentServerIdentity = {};
+  } catch(e) {
+      log.warn(`Agent server failed to load server identity: ${e}`);
+      throw new Error(e);
+  }
+
   const httpServer = createServer();
   const wss = new WebSocket.Server({ server: httpServer });
   const port = config.port || DEFAULT_AGENT_PORT;
   let maintenanceInterval;
+
+
 
   wss.on('connection', (ws, req) => {
     log.info('Incoming WebSocket connection');

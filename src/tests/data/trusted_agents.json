@@ -1,0 +1,7 @@
+{
+   "trusted_issuers": {
+        "urn:vouchsafe:alice.o7ral5urfji4jfeb442iehzbogirtuw5ue2mrqfslyd7brjdjsya": [
+            "agent-connect"
+        ]
+    } 
+}

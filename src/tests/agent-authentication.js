@@ -44,7 +44,16 @@ describe('Vouchsafe Agent Authentication', function () {
                 trusted_peers_config_file: trustedPeerFilePath
             },
             agent_server: {
-                port: TEST_AGENT_PORT
+                port: TEST_AGENT_PORT,
+                enable_compression: true, // Enable WebSocket compression
+                connect_timeout: 3,
+                identity: {
+                    identity_file: "data/pan_server.json",
+                    server_name: "Jay's Server",
+                    welcome_message: "Welcome! Don't be a jerk.",
+                    helo_claims: {}
+                }
+
             },
             agent_registry: {},
             agent_router: {},

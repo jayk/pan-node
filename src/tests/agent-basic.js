@@ -23,9 +23,19 @@ describe('Agent Agent Behavior (Direct Messaging)', function() {
         await startNode({
             peer_server: { 
                 port: TEST_PEER_PORT, 
-                trusted_peers_config_file: "trusted_peers.json"
+                trusted_peers_config_file: "data/trusted_peers.json"
             },
-            agent_server: { port: TEST_AGENT_PORT },
+            agent_server: { 
+                port: TEST_AGENT_PORT,
+                enable_compression: true, // Enable WebSocket compression
+                connect_timeout: 3,
+                identity: {
+                    identity_file: "data/pan_server.json",
+                    server_name: "Jay's Server",
+                    welcome_message: "Welcome! Don't be a jerk.",
+                    helo_claims: {}
+                }
+            },
             peer_router: {},
             agent_router: {},
             group_manager: {},
@@ -38,7 +48,7 @@ describe('Agent Agent Behavior (Direct Messaging)', function() {
                     local: {
                         type: "local",
                         allow_untrusted_agents: true,
-                        trusted_agents_config_file: "trusted_agents.json"                                                                                       
+                        trusted_agents_config_file: "data/trusted_agents.json"                                                                                       
                     }   
                 }
             },
@@ -66,14 +76,11 @@ describe('Agent Agent Behavior (Direct Messaging)', function() {
             console.log('Got connection');
             const authMsg = {
                 type: 'control',
-                msg_type: 'auth',
+                msg_type: 'helo',
                 msg_id: uuid.v4(),
                 from: { node_id: NULL_ID, conn_id: NULL_ID },
                 ttl: 1,
-                payload: {
-                    // whatever minimal fields are needed
-                    token: loginToken
-                }
+                payload: {}
             };
             wsAgent.send(JSON.stringify(authMsg));
         });
@@ -81,8 +88,20 @@ describe('Agent Agent Behavior (Direct Messaging)', function() {
         wsAgent.on('message', (data) => {
             const msg = JSON.parse(data.toString());
             console.log('agent message', msg);
-
-            if (msg.type === 'control' && msg.msg_type === 'auth.ok') {
+            if (msg.type === 'control' && msg.msg_type === 'helo') {
+                const authMsg = {
+                    type: 'control',
+                    msg_type: 'auth',
+                    msg_id: uuid.v4(),
+                    from: { node_id: NULL_ID, conn_id: NULL_ID },
+                    ttl: 1,
+                    payload: {
+                        // whatever minimal fields are needed
+                        token: loginToken
+                    }
+                };
+                wsAgent.send(JSON.stringify(authMsg));
+            } else if (msg.type === 'control' && msg.msg_type === 'auth.ok') {
                 assert.ok(msg.payload.node_id);
                 assert.ok(msg.payload.conn_id);
 

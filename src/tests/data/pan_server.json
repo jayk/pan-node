@@ -1,0 +1,9 @@
+{
+    "urn": "urn:vouchsafe:pan_server.ld4wqxnvlzgr5hoezsv5yap3mj476i56nesrsq3gyp4hya5upisa",
+    "keypair": {
+        "publicKey": "MCowBQYDK2VwAyEA3eFLOqLIaN2bH84/TBLuStfP3xoudjKu1tfyHaduYfQ=",
+        "privateKey": "MC4CAQAwBQYDK2VwBCIEIIhoUmwn0woHzFCihm7hb1ROQPXdrn3I5GeNxNw2+HoN"
+    },
+    "publicKeyHash": "ld4wqxnvlzgr5hoezsv5yap3mj476i56nesrsq3gyp4hya5upisa",
+    "version": "1.3.0"
+}
