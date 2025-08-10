@@ -17,6 +17,7 @@ const { getTrustValidator } = require('./vouchsafeTrust');
 // import { relayAuthToAgent } from './relayAgent.js'; // Future: enable dynamic dispatch to an auth agent
 
 const pendingAuthRequests = new Map(); // auth_request_id → { callback, tries }
+const pendingConnectTimeouts = {}; // track auth timeouts
 
 let config = {
     order: ['local'],

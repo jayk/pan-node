@@ -85,23 +85,36 @@ describe('Vouchsafe Agent Authentication', function () {
 
     it('should reject connection with no token', function (done) {
         let ws = new WebSocket(`ws://localhost:${TEST_AGENT_PORT}`);
+        let sentAuth = false;
+
         ws.on('open', () => {
-            setTimeout( () => {
             ws.send(JSON.stringify({
                 type: 'control',
-                msg_type: 'auth',
+                msg_type: 'helo',
                 msg_id: uuid.v4(),
                 from: { node_id: NULL_ID, conn_id: NULL_ID },
                 ttl: 1,
-                payload: {
-                    // no token
-                }
+                payload: {}
             }));
-            }, 5000);
         });
 
-        ws.once('message', (data) => {
+        ws.on('message', (data) => {
             const msg = JSON.parse(data);
+            if (msg.msg_type === 'helo' && !sentAuth) {
+                sentAuth = true;
+                ws.send(JSON.stringify({
+                    type: 'control',
+                    msg_type: 'auth',
+                    msg_id: uuid.v4(),
+                    from: { node_id: NULL_ID, conn_id: NULL_ID },
+                    ttl: 1,
+                    payload: {
+                        // no token
+                    }
+                }));
+                return;
+            }
+
             assert.strictEqual(msg.msg_type, 'auth.failed');
             assert.match(msg.payload.message, /missing/i);
             ws.close();
@@ -117,22 +130,36 @@ describe('Vouchsafe Agent Authentication', function () {
     it('should reject connection with non-vouchsafe JWT', function (done) {
         let ws = new WebSocket(`ws://localhost:${TEST_AGENT_PORT}`);
         const fakeJwt = jwt.sign({ sub: 'unauthorized' }, 'not-vouchsafe');
+        let sentAuth = false;
 
         ws.on('open', () => {
             ws.send(JSON.stringify({
                 type: 'control',
-                msg_type: 'auth',
+                msg_type: 'helo',
                 msg_id: uuid.v4(),
                 from: { node_id: NULL_ID, conn_id: NULL_ID },
                 ttl: 1,
-                payload: {
-                    token: fakeJwt
-                }
+                payload: {}
             }));
         });
 
-        ws.once('message', (data) => {
+        ws.on('message', (data) => {
             const msg = JSON.parse(data);
+            if (msg.msg_type === 'helo' && !sentAuth) {
+                sentAuth = true;
+                ws.send(JSON.stringify({
+                    type: 'control',
+                    msg_type: 'auth',
+                    msg_id: uuid.v4(),
+                    from: { node_id: NULL_ID, conn_id: NULL_ID },
+                    ttl: 1,
+                    payload: {
+                        token: fakeJwt
+                    }
+                }));
+                return;
+            }
+
             assert.strictEqual(msg.msg_type, 'auth.failed');
             assert.match(msg.payload.message, /Access Denied/i);
             ws.close();
@@ -153,21 +180,36 @@ describe('Vouchsafe Agent Authentication', function () {
 
         await new Promise((resolve, reject) => {
             ws = new WebSocket(`ws://localhost:${TEST_AGENT_PORT}`);
+            let sentAuth = false;
+
             ws.on('open', () => {
                 ws.send(JSON.stringify({
                     type: 'control',
-                    msg_type: 'auth',
+                    msg_type: 'helo',
                     msg_id: uuid.v4(),
                     from: { node_id: NULL_ID, conn_id: NULL_ID },
                     ttl: 1,
-                    payload: {
-                        token
-                    }
+                    payload: {}
                 }));
             });
 
-            ws.once('message', (data) => {
+            ws.on('message', (data) => {
                 const msg = JSON.parse(data);
+                if (msg.msg_type === 'helo' && !sentAuth) {
+                    sentAuth = true;
+                    ws.send(JSON.stringify({
+                        type: 'control',
+                        msg_type: 'auth',
+                        msg_id: uuid.v4(),
+                        from: { node_id: NULL_ID, conn_id: NULL_ID },
+                        ttl: 1,
+                        payload: {
+                            token
+                        }
+                    }));
+                    return;
+                }
+
                 assert.strictEqual(msg.msg_type, 'auth.failed');
                 assert.match(msg.payload.message, /Access Denied/i);
                 ws.close();
@@ -176,7 +218,7 @@ describe('Vouchsafe Agent Authentication', function () {
 
             ws.on('error', (data) => {
                 ws.close();
-                reject()
+                reject();
             });
         });
     });
@@ -189,21 +231,36 @@ describe('Vouchsafe Agent Authentication', function () {
 
         await new Promise((resolve, reject) => {
             ws = new WebSocket(`ws://localhost:${TEST_AGENT_PORT}`);
+            let sentAuth = false;
+
             ws.on('open', () => {
                 ws.send(JSON.stringify({
                     type: 'control',
-                    msg_type: 'auth',
+                    msg_type: 'helo',
                     msg_id: uuid.v4(),
                     from: { node_id: NULL_ID, conn_id: NULL_ID },
                     ttl: 1,
-                    payload: {
-                        token
-                    }
+                    payload: {}
                 }));
             });
 
-            ws.once('message', (data) => {
+            ws.on('message', (data) => {
                 const msg = JSON.parse(data);
+                if (msg.msg_type === 'helo' && !sentAuth) {
+                    sentAuth = true;
+                    ws.send(JSON.stringify({
+                        type: 'control',
+                        msg_type: 'auth',
+                        msg_id: uuid.v4(),
+                        from: { node_id: NULL_ID, conn_id: NULL_ID },
+                        ttl: 1,
+                        payload: {
+                            token
+                        }
+                    }));
+                    return;
+                }
+
                 assert.strictEqual(msg.msg_type, 'auth.ok');
                 assert.ok(msg.payload.conn_id);
                 assert.ok(msg.payload.node_id);
@@ -213,7 +270,7 @@ describe('Vouchsafe Agent Authentication', function () {
 
             ws.on('error', (data) => {
                 ws.close();
-                reject()
+                reject();
             });
         });
     });
